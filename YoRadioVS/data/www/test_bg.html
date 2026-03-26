@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>yoRadio — BG Test</title>
+  <style>
+    /* minimal inline styling based on embedded UI */
+    html,body{height:100%;margin:0;font-family:system-ui,Segoe UI,Helvetica,Arial;color:#e3d25f;background:#0a0a0f}
+    canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none}
+    #wrap{position:relative;z-index:1;max-width:480px;margin:40px auto;padding:24px;background:rgba(10,10,20,.82);border:1px solid rgba(227,210,95,.12);border-radius:12px;backdrop-filter:blur(8px)}
+    h1{margin:0 0 8px;font-size:20px}
+    p{margin:6px 0;color:#bbb}
+    .meta{font-size:13px;color:#999}
+    button{margin-top:12px;padding:8px 12px;border-radius:8px;border:0;background:linear-gradient(135deg,#e3d25f,#c9b93f);cursor:pointer}
+  </style>
+  <script>
+    // minimal variables used by original UI
+    var yoVersion = 'test';
+    var formAction = '';
+    var playMode = 'player';
+  </script>
+</head>
+<body>
+  <canvas id="yobg"></canvas>
+
+  <div id="wrap" role="main" aria-live="polite">
+    <h1>yoRadio — Background Test</h1>
+    <p class="meta">This is a local test page mirroring the embedded UI. The WebGL/background script is loaded from <code>bg.js</code>.</p>
+    <p id="status">Play mode: <strong id="pm">player</strong></p>
+    <p class="meta">If the background is not visible: clear browser cache (Ctrl+F5) or verify <code>bg.js</code> is uploaded to the device.</p>
+    <button id="toggle">Toggle demo overlay</button>
+  </div>
+
+  <script>
+    // small UI helpers for testing
+    document.getElementById('pm').textContent = playMode;
+    document.getElementById('toggle').addEventListener('click', function(){
+      var w = document.getElementById('wrap');
+      w.style.display = (w.style.display === 'none') ? '' : 'none';
+    });
+    // ensure canvas fills on resize
+    (function(){ var c = document.getElementById('yobg'); function fit(){ c.width = innerWidth * (window.devicePixelRatio||1); c.height = innerHeight * (window.devicePixelRatio||1); c.style.width = innerWidth+'px'; c.style.height = innerHeight+'px'; } fit(); addEventListener('resize', fit); })();
+  </script>
+
+  <!-- load the background script you uploaded to SPIFFS -->
+  <script src="bg.js"></script>
+</body>
+</html>
