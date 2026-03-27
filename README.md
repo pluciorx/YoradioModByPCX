@@ -1,3 +1,36 @@
+## Changes compared to original yoRadio
+
+This repository contains a set of enhancements applied on top of the original yoRadio project. The original README is preserved below unchanged — this section is prepended so users see the fork-specific additions first.
+
+### Highlights
+- Added support for LCD 40×2 (LCD2004/WH2002-style) character displays — driver helpers, wiring examples and display animations.
+- Updated I2S / audio libraries and VS/I2S initialization for improved ESP32 compatibility and audio stability.
+- Full 12-button capacitive touch support via integrated `MPR121` driver:
+  - `TOUCH`, `RELEASE`, `SHORT_CLICK` and `LONG_PRESS` events
+  - Debounce and timing configuration exposed
+  - Default timings: debounce 20 ms, short-click 400 ms, long-press 800 ms
+  - Polling-based driver (IRQ pin not required) for simpler integration
+- Animated LCD UI: startup animation, transitions and character-based visualizations (including a character VU meter).
+- Web UI refresh and new www assets:
+  - New particle background and styling (`data/www/bg.js`)
+  - Additional settings pages exposing display, audio and touch configuration
+  - Playlist editor improvements (search, preview handling)
+- New on-device widgets & visual features:
+  - Character VU meter, on-screen clocks (digital/analog), and related settings
+- Examples and integrations:
+  - Updated/added examples demonstrating LCD wiring and animations, MPR121 electrode→action mapping, and updated web UI usage.
+- Misc:
+  - PSRAM-aware audio buffer sizing and improved buffer handling for VS1053/I2S paths.
+  - Backwards-compatibility notes and migration guidance included below.
+
+### Migration / usage notes
+- Wiring: consult examples for LCD 40×2 wiring and MPR121 I2C address options (0x5A–0x5D). The touch driver uses polling; IRQ connection is optional.
+- Web configuration: new settings allow tuning animation speed, VU sensitivity, clock format, and touch thresholds.
+- Upgrading: most original yoRadio settings remain; review the web settings and examples after upgrade — some options may have been renamed or moved to support the new features.
+- Files changed/added (high level): updated `data/www` assets (including `bg.js`, `script.js`), integrated `MPR121Touch` code, LCD drivers/animation code and audio improvements under `src/audio*`.
+
+---
+
 # ёRadio
 <img src="images/yologo.png" width="190" height="142">
 

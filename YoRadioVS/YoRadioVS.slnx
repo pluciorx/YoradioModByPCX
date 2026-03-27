@@ -5,6 +5,12 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Folder Name="/Solution Items/">
+    <File Path="../Controls.md" />
+    <File Path="../Images.md" />
+    <File Path="../LICENSE" />
+    <File Path="../README.md" />
+  </Folder>
   <Project Path="../Testing/Testing.vcxproj" Id="10b260e8-eeff-49e5-a869-a57323f94922">
     <Platform Solution="*|x86" Project="x86" />
     <Deploy />
