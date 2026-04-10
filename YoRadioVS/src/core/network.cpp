@@ -10,6 +10,7 @@
 #include "player.h"
 #include "mqtt.h"
 #include "timekeeper.h"
+#include "esp_wifi.h"
 #include "../pluginsManager/pluginsManager.h"
 
 #ifndef WIFI_ATTEMPTS
@@ -68,6 +69,8 @@ bool MyNetwork::wifiBegin(bool silent){
     WiFi.disconnect(true, true); //disconnect & erase internal credentials https://github.com/e2002/yoradio/pull/164/commits/89d8b4450dde99cd7930b84bb14d81dab920b879
     delay(100);
     WiFi.mode(WIFI_STA);
+	WiFi.setSleep(false);
+    esp_wifi_set_ps(WIFI_PS_NONE);
     WiFi.begin(config.ssids[ls].ssid, config.ssids[ls].password);
     while (WiFi.status() != WL_CONNECTED) {
       if(!silent) Serial.print(".");
