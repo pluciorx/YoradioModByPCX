@@ -80,7 +80,6 @@
     <TargetOSAndVersion>Arduino</TargetOSAndVersion>
   </PropertyGroup>
   <ItemGroup>
-    <ClCompile Include="dns_fix.c" />
     <ClCompile Include="fonts\glcdfont.c" />
     <ClCompile Include="fonts\glcdfont_EN.c" />
     <ClCompile Include="src\Adafruit_GC9106Ex\Adafruit_GC9106Ex.cpp" />
@@ -130,7 +129,6 @@
     <ClCompile Include="src\core\config.cpp" />
     <ClCompile Include="src\core\controls.cpp" />
     <ClCompile Include="src\core\display.cpp" />
-    <ClCompile Include="src\core\dns_fix.cpp" />
     <ClCompile Include="src\core\mqtt.cpp" />
     <ClCompile Include="src\core\netserver.cpp" />
     <ClCompile Include="src\core\network.cpp" />
@@ -285,7 +283,6 @@
     <ProjectCapability Include="VisualMicro" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="dns_fix.h" />
     <ClInclude Include="locale\displayL10n_en.h" />
     <ClInclude Include="locale\displayL10n_pl.h" />
     <ClInclude Include="locale\displayL10n_ru.h" />

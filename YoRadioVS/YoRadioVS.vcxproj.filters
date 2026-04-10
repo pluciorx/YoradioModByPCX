@@ -563,12 +563,6 @@
     <ClCompile Include="src\userdefine.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="dns_fix.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\core\dns_fix.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="__vm\.YoRadioVS.vsarduino.h">
@@ -1298,9 +1292,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\userdefine.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="dns_fix.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
