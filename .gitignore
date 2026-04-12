@@ -416,3 +416,4 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+/YoRadioVS/YoRadioVS.ino.esp32s3.bin
