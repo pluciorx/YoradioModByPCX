@@ -1,128 +1,177 @@
-#include <WiFi.h>
-#include <esp_wifi.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
-// ================= CONFIG =================
-const char* SSID = "IoT";
-const char* PASS = "PhieV5ai";
+// 40x2 (4002) I2C LCD test sketch
+// Typical addresses: 0x27 or 0x3F
+// Typical ESP32 I2C pins: SDA=21, SCL=22
 
-// ================= HELPERS =================
-int rssiToQuality(int rssi) {
-    if (rssi <= -100) return 0;
-    if (rssi >= -50) return 100;
-    return 2 * (rssi + 100);
+#ifndef I2C_SDA_PIN
+#define I2C_SDA_PIN SDA
+#endif
+
+#ifndef I2C_SCL_PIN 
+#define I2C_SCL_PIN SCL
+#endif
+
+#ifndef LCD_I2C_ADDR
+#define LCD_I2C_ADDR 0x27
+#endif
+
+LiquidCrystal_I2C lcd(LCD_I2C_ADDR, 40, 2);
+
+// ---------------- ENCODER CONFIG ----------------
+#ifndef ENC_PIN_A
+#define ENC_PIN_A 4 // S1
+#endif
+#ifndef ENC_PIN_B
+#define ENC_PIN_B 3 // S2
+#endif
+#ifndef ENC_PIN_SW
+#define ENC_PIN_SW 14 // SW (pushbutton)
+#endif
+
+volatile int32_t encoderPos = 0;
+volatile uint32_t encoderLastTs = 0;
+volatile bool encoderMoved = false;
+
+// Basic ISR: read both pins and increment/decrement position
+void IRAM_ATTR encoderISR() {
+  uint8_t a = digitalRead(ENC_PIN_A);
+  uint8_t b = digitalRead(ENC_PIN_B);
+  // simple direction detection: when A changes, check B
+  if (a == b) encoderPos++; else encoderPos--;
+  encoderLastTs = millis();
+  encoderMoved = true;
 }
 
-const char* authModeName(wifi_auth_mode_t mode) {
-    switch (mode) {
-    case WIFI_AUTH_OPEN: return "OPEN";
-    case WIFI_AUTH_WEP: return "WEP";
-    case WIFI_AUTH_WPA_PSK: return "WPA_PSK";
-    case WIFI_AUTH_WPA2_PSK: return "WPA2_PSK";
-    case WIFI_AUTH_WPA_WPA2_PSK: return "WPA/WPA2_PSK";
-    case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2_ENTERPRISE";
-    case WIFI_AUTH_WPA3_PSK: return "WPA3_PSK";
-    case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2/WPA3_PSK";
-    default: return "UNKNOWN";
-    }
-}
+// Button handling (debounced, long press)
+unsigned long btnLastDebounce = 0;
+int btnLastState = HIGH;
+int btnStableState = HIGH;
+bool btnLongHandled = false;
+const unsigned long BTN_DEBOUNCE = 50;
+const unsigned long BTN_LONGPRESS = 1000;
 
-// ================= WIFI CONNECT =================
-bool connectWiFi() {
-    Serial.printf("Connecting to SSID '%s'...\n", SSID);
-
-    WiFi.disconnect(true);
-    delay(200);
-
-    WiFi.begin(SSID, PASS);
-
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 40) { // ~20 sec
-        delay(500);
-        Serial.print(".");
-        attempts++;
-    }
-
-    Serial.println();
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("✅ Connected!");
-        Serial.print("IP: "); Serial.println(WiFi.localIP());
-        Serial.print("RSSI: "); Serial.println(WiFi.RSSI());
-        Serial.print("MAC: "); Serial.println(WiFi.macAddress());
-        return true;
-    }
-    else {
-        Serial.println("❌ Failed to connect");
-        return false;
-    }
-}
-
-// ================= SAFE SCAN =================
-void scanNetworks() {
-    Serial.println("Scanning for WiFi networks...");
-
-    int n = WiFi.scanNetworks();
-
-    if (n <= 0) {
-        Serial.println("No networks found");
-    }
-    else {
-        Serial.printf("Found %d networks:\n", n);
-
-        for (int i = 0; i < n; ++i) {
-            String ssid = WiFi.SSID(i);
-            int32_t rssi = WiFi.RSSI(i);
-            String bssid = WiFi.BSSIDstr(i);
-            int quality = rssiToQuality(rssi);
-            wifi_auth_mode_t auth = WiFi.encryptionType(i);
-
-            Serial.printf("%2d: %-32s RSSI: %4d dBm  Quality: %3d%%  BSSID: %s  Ch: %2d  Auth: %s\n",
-                i + 1,
-                ssid.c_str(),
-                rssi,
-                quality,
-                bssid.c_str(),
-                WiFi.channel(i),
-                authModeName(auth));
+void handleButton() {
+  int reading = digitalRead(ENC_PIN_SW);
+  unsigned long now = millis();
+  if (reading != btnLastState) {
+    btnLastDebounce = now;
+  }
+  if ((now - btnLastDebounce) > BTN_DEBOUNCE) {
+    if (reading != btnStableState) {
+      btnStableState = reading;
+      if (btnStableState == LOW) {
+        // pressed
+        btnLongHandled = false;
+      } else {
+        // released: short click if long press wasn't handled
+        if (!btnLongHandled) {
+          // short click action
+          // example: reset encoder position
+          encoderPos = 0;
         }
+      }
     }
-
-    WiFi.scanDelete(); // VERY IMPORTANT (heap stability)
+  }
+  // long press detection
+  if (btnStableState == LOW && !btnLongHandled && (now - btnLastDebounce) > BTN_LONGPRESS) {
+    // long press action
+    encoderPos = 0; // example: also reset (user can customize)
+    btnLongHandled = true;
+  }
+  btnLastState = reading;
 }
 
-// ================= SETUP =================
+uint8_t findLcdAddress() {
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      return addr;
+    }
+  }
+  return 0;
+}
+
+void printCentered(uint8_t row, const char* text) {
+  size_t len = strlen(text);
+  uint8_t col = 0;
+  if (len < 40) col = (40 - len) / 2;
+  lcd.setCursor(0, row);
+  lcd.print("                                        ");
+  lcd.setCursor(col, row);
+  lcd.print(text);
+}
+
 void setup() {
-    Serial.begin(115200);
-    delay(500);
+  Serial.begin(115200);
+  delay(300);
 
-    Serial.println("\nWiFi Stable Client");
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  Serial.printf("I2C init SDA=%d SCL=%d\n", I2C_SDA_PIN, I2C_SCL_PIN);
 
-    // Critical settings for stability
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);                 // disable power save (huge fix)
-    esp_wifi_set_ps(WIFI_PS_NONE);        // extra safety
+  uint8_t found = findLcdAddress();
+  if (found) {
+    Serial.printf("I2C device found at 0x%02X\n", found);
+  } else {
+    Serial.println("No I2C device found");
+  }
 
-    // Initial connect
-    if (!connectWiFi()) {
-        Serial.println("Initial connection failed, will retry in loop...");
-    }
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+
+  // encoder pins
+  pinMode(ENC_PIN_A, INPUT_PULLUP);
+  pinMode(ENC_PIN_B, INPUT_PULLUP);
+  pinMode(ENC_PIN_SW, INPUT_PULLUP);
+  // attach ISR to one channel (CHANGE) for simple decoding
+  if(digitalPinToInterrupt(ENC_PIN_A) != NOT_AN_INTERRUPT) {
+    attachInterrupt(digitalPinToInterrupt(ENC_PIN_A), encoderISR, CHANGE);
+  } else {
+    Serial.println("Warning: ENC_PIN_A cannot be used as interrupt pin");
+  }
+
+  printCentered(0, "yoRadio 4002 LCD TEST");
+  printCentered(1, "Init OK");
+  delay(1500);
 }
 
-// ================= LOOP =================
 void loop() {
+  static uint32_t sec = 0;
+  char line0[41];
+  char line1[41];
 
-    // 🔁 Maintain connection
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("\n⚠️ WiFi lost, reconnecting...");
-        connectWiFi();
+  // poll button logic
+  handleButton();
 
-        // Optional: scan ONLY when disconnected (safe)
-        scanNetworks();
-    }
+  // copy encoder atomically
+  noInterrupts();
+  int32_t pos = encoderPos;
+  bool moved = encoderMoved;
+  encoderMoved = false;
+  interrupts();
 
-    // Example: print status every 10s
-    Serial.print("Connected, RSSI: ");
-    Serial.println(WiFi.RSSI());
+  const char* bstate = (btnStableState == LOW) ? "PRESSED" : "RELEASE";
 
-    delay(10000);
+  // build lines
+  snprintf(line0, sizeof(line0), "Enc: %ld %s", (long)pos, moved?"*":" ");
+  snprintf(line1, sizeof(line1), "Btn:%s  Up:%lus Heap:%lu", bstate, (unsigned long)sec, (unsigned long)ESP.getFreeHeap());
+
+  // pad/clear and print
+  lcd.setCursor(0, 0);
+  lcd.print("                                        ");
+  lcd.setCursor(0, 0);
+  lcd.print(line0);
+
+  lcd.setCursor(0, 1);
+  lcd.print("                                        ");
+  lcd.setCursor(0, 1);
+  lcd.print(line1);
+
+  // also print to Serial so user can monitor
+  Serial.printf("%s | %s\n", line0, line1);
+
+  sec++;
+  delay(200);
 }
