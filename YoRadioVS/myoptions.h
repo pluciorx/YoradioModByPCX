@@ -40,7 +40,7 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 /*  NEXTION  */
 //#define NEXTION_RX    255                   /*  Nextion RX pin  */
 //#define NEXTION_TX    255                   /*  Nextion TX pin  */
-  
+ 
 /*  I2C PINS  */
 //#define I2C_SDA           11                /*  I2C SDA pin. It is best to connect to pin 21.  */
 //#define I2C_SCL           12                /*  I2C SCL pin. It is best to connect to pin 22.  */

@@ -1,3 +1,4 @@
+
 #include <Wire.h>
 #include "core/options.h"     // <-- ensure BUFLEN and other macros are defined
 #include "core/config.h"
