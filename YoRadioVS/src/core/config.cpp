@@ -31,20 +31,39 @@ void u8fix(char *src){
 }
 
 bool Config::_isFSempty() {
-  const char* reqiredFiles[] = {"dragpl.js.gz","ir.css.gz","irrecord.html.gz","ir.js.gz","logo.svg.gz","options.html.gz","player.html.gz","script.js.gz",
-                                "style.css.gz","updform.html.gz","theme.css"};
-  const uint8_t reqiredFilesSize = 11;
-  char fullpath[28];
-  if(SPIFFS.exists("/www/settings.html")) SPIFFS.remove("/www/settings.html");
-  if(SPIFFS.exists("/www/update.html")) SPIFFS.remove("/www/update.html");
-  if(SPIFFS.exists("/www/index.html")) SPIFFS.remove("/www/index.html");
-  if(SPIFFS.exists("/www/ir.html")) SPIFFS.remove("/www/ir.html");
-  if(SPIFFS.exists("/www/elogo.png")) SPIFFS.remove("/www/elogo.png");
-  if(SPIFFS.exists("/www/elogo84.png")) SPIFFS.remove("/www/elogo84.png");
-  for (uint8_t i=0; i<reqiredFilesSize; i++){
-    sprintf(fullpath, "/www/%s", reqiredFiles[i]);
-    if(!SPIFFS.exists(fullpath)) {
+  const char* requiredFiles[] = {"dragpl.js","ir.css","irrecord.html","ir.js","logo.svg","options.html","player.html","script.js",
+                                 "style.css","updform.html","theme.css"};
+  const uint8_t requiredFilesSize = sizeof(requiredFiles) / sizeof(requiredFiles[0]);
+  char fullpath[64];
+  char fullpathgz[64];
+
+  // Remove some legacy filenames if they exist
+  if (SPIFFS.exists("/www/settings.html")) SPIFFS.remove("/www/settings.html");
+  if (SPIFFS.exists("/www/update.html")) SPIFFS.remove("/www/update.html");
+  if (SPIFFS.exists("/www/index.html")) SPIFFS.remove("/www/index.html");
+  if (SPIFFS.exists("/www/ir.html")) SPIFFS.remove("/www/ir.html");
+  if (SPIFFS.exists("/www/elogo.png")) SPIFFS.remove("/www/elogo.png");
+  if (SPIFFS.exists("/www/elogo84.png")) SPIFFS.remove("/www/elogo84.png");
+
+  // Check each required file. Accept either the plain file or the .gz compressed variant.
+  for (uint8_t i = 0; i < requiredFilesSize; i++) {
+    snprintf(fullpath, sizeof(fullpath), "/www/%s", requiredFiles[i]);
+    snprintf(fullpathgz, sizeof(fullpathgz), "/www/%s.gz", requiredFiles[i]);
+    if (!SPIFFS.exists(fullpath) && !SPIFFS.exists(fullpathgz)) {
+      // Print missing file and a listing of the /www directory to help debugging
+      Serial.print("Missing: ");
       Serial.println(fullpath);
+      Serial.println("SPIFFS /www contents:");
+      File root = SPIFFS.open("/www");
+      if (root && root.isDirectory()) {
+        File file = root.openNextFile();
+        while (file) {
+          Serial.println(file.name());
+          file = root.openNextFile();
+        }
+      } else {
+        Serial.println("  <no /www directory>");
+      }
       return true;
     }
   }

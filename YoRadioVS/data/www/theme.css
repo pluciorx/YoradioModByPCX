@@ -1,19 +1,30 @@
 :root {
---main-bg-color:        #010101;
---main-text-color:      #cccccc;
---main-hl-color:        #ffffff;
---odd-bg-color:         #272727;
---accent-color:         #e3d25f;
---accent-dark:          #ad9838;
---accent-text-color:    #000000;
---input-border:         #2d2d2d;
---logo:                 #e3d25f;
---logo-red:             #ff0000;
---logo-shadow:          #a89c46;
---playlist-hover:       #323232;
---section-gradient:     #111111;
---section-border:       #555555;
---heapbar-color:        #3ea220;
+--main-bg-color:        #0b111b;
+--main-text-color:      #c8d3e6;
+--main-hl-color:        #f2f7ff;
+--odd-bg-color:         #111a27;
+--accent-color:         #69b6ff;
+--accent-dark:          #2f6ea8;
+--accent-text-color:    #061322;
+--input-border:         #2b3d55;
+--logo:                 #8ecbff;
+--logo-red:             #6ea6ff;
+--logo-shadow:          #274e80;
+--playlist-hover:       #18273d;
+--section-gradient:     #0d1726;
+--section-border:       #30455f;
+--heapbar-color:        #39d4ff;
+
+--radius-sm:            10px;
+--radius-md:            16px;
+--radius-lg:            999px;
+--glass-bg:             rgba(16, 27, 41, 0.72);
+--glass-border:         rgba(122, 171, 226, 0.22);
+--glass-blur:           10px;
+--card-shadow:          0 10px 34px rgba(2, 9, 18, 0.55);
+--glow-accent:          rgba(105, 182, 255, 0.40);
+--nav-bg:               rgba(14, 24, 37, 0.82);
+--nav-active-bg:        rgba(69, 125, 180, 0.22);
 }
 
 /* ensure UI elements are above the canvas background */

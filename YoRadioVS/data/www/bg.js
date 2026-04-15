@@ -25,11 +25,35 @@
   let W = 0, H = 0, particles = [], maxParticles = 160, connectDist = 180, neighbors = 4;
   let globalTime = 0;
 
-  // yoRadio palette
-  const YO_GOLD = '227,210,95';
-  const YO_GOLD_DARK = '140,120,45';
-  const BG_TOP = '8,4,20';
-  const BG_BOT = '18,10,30';
+  // palette from CSS theme vars (falls back to blue/grey scheme)
+  function hexToRgbCsv(hex, fallback){
+    if(!hex || typeof hex !== 'string') return fallback;
+    const h = hex.trim();
+    const m = h.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if(!m) return fallback;
+    let v = m[1];
+    if(v.length === 3) v = v.split('').map(ch => ch + ch).join('');
+    const n = parseInt(v, 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    return `${r},${g},${b}`;
+  }
+
+  function cssVar(name, fallback){
+    const s = getComputedStyle(document.documentElement).getPropertyValue(name);
+    return (s && s.trim()) ? s.trim() : fallback;
+  }
+
+  let ACCENT = '105,182,255';
+  let ACCENT_DARK = '47,110,168';
+  let BG_TOP = '11,17,27';
+  let BG_BOT = '16,27,41';
+
+  function refreshPalette(){
+    ACCENT = hexToRgbCsv(cssVar('--accent-color', '#69b6ff'), '105,182,255');
+    ACCENT_DARK = hexToRgbCsv(cssVar('--accent-dark', '#2f6ea8'), '47,110,168');
+    BG_TOP = hexToRgbCsv(cssVar('--main-bg-color', '#0b111b'), '11,17,27');
+    BG_BOT = hexToRgbCsv(cssVar('--odd-bg-color', '#111a27'), '16,27,41');
+  }
 
   function rand(min, max){ return Math.random() * (max - min) + min; }
 
@@ -39,7 +63,9 @@
       y: rand(0, H),
       vx: rand(-40, 40),   // px/s
       vy: rand(-32, 32),   // px/s
-      r: rand(1.3, 3.0)
+      r: rand(1.1, 2.8),
+      tw: rand(0.0, Math.PI * 2),
+      tws: rand(0.6, 1.4)
     };
   }
 
@@ -166,10 +192,17 @@
   function draw(){
     ctx.clearRect(0,0,W,H);
     const g = ctx.createLinearGradient(0,0,0,H);
-    g.addColorStop(0, `rgba(${BG_TOP},0.92)`);
-    g.addColorStop(1, `rgba(${BG_BOT},0.95)`);
+    g.addColorStop(0, `rgba(${BG_TOP},0.90)`);
+    g.addColorStop(1, `rgba(${BG_BOT},0.96)`);
     ctx.fillStyle = g;
     ctx.fillRect(0,0,W,H);
+
+    // subtle radial bloom in upper-right for modern DAC feel
+    const rg = ctx.createRadialGradient(W * 0.85, H * 0.08, 0, W * 0.85, H * 0.08, Math.max(W, H) * 0.75);
+    rg.addColorStop(0, `rgba(${ACCENT},0.10)`);
+    rg.addColorStop(1, `rgba(${ACCENT},0.0)`);
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, W, H);
 
     // glow layer
     ctx.save();
@@ -194,7 +227,7 @@
         const dist = Math.sqrt(nb.d2);
         // subtler glow and smaller stroke
         const alpha = 0.18 * (1 - dist / connectDist);
-        ctx.strokeStyle = `rgba(${YO_GOLD},${(alpha*0.85).toFixed(3)})`;
+        ctx.strokeStyle = `rgba(${ACCENT},${(alpha*0.82).toFixed(3)})`;
         ctx.lineWidth = 1.8;
         ctx.beginPath();
         const ax = a.x, ay = a.y;
@@ -229,8 +262,8 @@
         const nb = nearest[k];
         const b = particles[nb.idx];
         const dist = Math.sqrt(nb.d2);
-        const alpha = 0.22 * (1 - dist / connectDist);
-        ctx.strokeStyle = `rgba(${YO_GOLD_DARK},${alpha.toFixed(3)})`;
+        const alpha = 0.20 * (1 - dist / connectDist);
+        ctx.strokeStyle = `rgba(${ACCENT_DARK},${alpha.toFixed(3)})`;
         ctx.beginPath();
         const ax = a.x, ay = a.y;
         const bx = ax - nb.dx;
@@ -245,11 +278,13 @@
 
     // draw points
     for(let p of particles){
+      p.tw += 0.02 * p.tws;
+      const pulse = 0.82 + Math.sin(p.tw + globalTime * 1.1) * 0.18;
       ctx.beginPath();
-      ctx.fillStyle = `rgba(${YO_GOLD},1)`;
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(${ACCENT},${Math.max(0.65, pulse).toFixed(3)})`;
+      ctx.arc(p.x, p.y, p.r * (0.92 + pulse * 0.12), 0, Math.PI*2);
       ctx.fill();
-      ctx.strokeStyle = `rgba(0,0,0,0.18)`;
+      ctx.strokeStyle = `rgba(${BG_TOP},0.28)`;
       ctx.lineWidth = 0.6;
       ctx.stroke();
     }
@@ -279,6 +314,8 @@
     getCount(){ return particles.length; }
   };
 
+  refreshPalette();
+  addEventListener('load', refreshPalette);
   resize();
   last = performance.now();
   requestAnimationFrame(loop);

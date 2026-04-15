@@ -66,9 +66,9 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 /******************************************/
 
 /*  ENCODER  */
-#define ENC_BTNL              7           /*  Left rotation */
+#define ENC_BTNL              6           /*  Left rotation */
 #define ENC_BTNB              13           /*  Encoder button */
-#define ENC_BTNR              6           /*  Right rotation */
+#define ENC_BTNR              5           /*  Right rotation */
 //#define ENC_INTERNALPULLUP    false          /*  Enable the weak pull up resistors */
 #define ENC_HALFQUARD         true          /*  Experiment  with it */
 /******************************************/
@@ -165,7 +165,7 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 /******************************************/
 
 /*  IR control  */
-//#define IR_PIN                255
+#define IR_PIN                7
 //#define IR_TIMEOUT            80              /*  see kTimeout description in IRremoteESP8266 example https://github.com/crankyoldgit/IRremoteESP8266/blob/master/examples/IRrecvDumpV2/IRrecvDumpV2.ino */
 
 /******************************************/
