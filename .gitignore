@@ -421,3 +421,8 @@ FodyWeavers.xsd
 
 #Visual Micro's Visual Studio extension for microcontroller development
 __vm
+/YoRadioVS/__vm/Compile.vmps.xml
+/YoRadioVS/__vm/Configuration.Debug.vmps.xml
+/YoRadioVS/__vm/Configuration.Release.vmps.xml
+/YoRadioVS/__vm/Upload.vmps.xml
+/YoRadioVS/__vm/.YoRadioVS.vsarduino.h
