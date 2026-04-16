@@ -12,10 +12,12 @@
     <File Path="../README.md" />
   </Folder>
   <Project Path="../Testing/Testing.vcxproj" Id="10b260e8-eeff-49e5-a869-a57323f94922">
+    <BuildType Solution="Release|ARM" Project="Debug" />
     <Platform Solution="*|x86" Project="x86" />
     <Deploy />
   </Project>
   <Project Path="YoRadioVS.vcxproj" Id="33033857-8d40-4ea4-91bb-05dd4a575572">
+    <BuildType Solution="Release|ARM" Project="Debug" />
     <Platform Solution="*|x86" Project="x86" />
     <Deploy />
   </Project>

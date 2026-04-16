@@ -327,7 +327,7 @@ class AsyncWebRewrite {
  * HANDLER :: One instance can be attached to any Request (done by the Server)
  * */
 
-class AsyncWebHandler {
+class AsyncWebHandler{
   protected:
     ArRequestFilterFunction _filter;
     String _username;

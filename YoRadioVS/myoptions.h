@@ -40,7 +40,7 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 /*  NEXTION  */
 //#define NEXTION_RX    255                   /*  Nextion RX pin  */
 //#define NEXTION_TX    255                   /*  Nextion TX pin  */
-  
+ 
 /*  I2C PINS  */
 //#define I2C_SDA           11                /*  I2C SDA pin. It is best to connect to pin 21.  */
 //#define I2C_SCL           12                /*  I2C SCL pin. It is best to connect to pin 22.  */
@@ -68,7 +68,7 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 /*  ENCODER  */
 #define ENC_BTNL              5           /*  Left rotation */
 #define ENC_BTNB              13           /*  Encoder button */
-#define ENC_BTNR              6           /*  Right rotation */
+#define ENC_BTNR              5           /*  Right rotation */
 //#define ENC_INTERNALPULLUP    false          /*  Enable the weak pull up resistors */
 #define ENC_HALFQUARD         true          /*  Experiment  with it */
 /******************************************/
