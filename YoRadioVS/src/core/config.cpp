@@ -82,12 +82,13 @@ void Config::init() {
   #endif
 #endif
   eepromRead(EEPROM_START, store);
-  bootInfo(); // https://github.com/e2002/yoradio/pull/149
   if (store.config_set != 4262) {
     setDefaults();
   }
   if(store.version>CONFIG_VERSION) store.version=1;
   while(store.version!=CONFIG_VERSION) _setupVersion();
+  _sanitizeStore();
+  bootInfo(); // https://github.com/e2002/yoradio/pull/149
   BOOTLOG("CONFIG_VERSION\t%d", store.version);
   store.play_mode = store.play_mode & 0b11;
   if(store.play_mode>1) store.play_mode=PM_WEB;
@@ -107,6 +108,50 @@ void Config::init() {
   #endif
   _bootDone=false;
   setTimeConf();
+}
+
+void Config::_sanitizeStore(){
+  auto terminate = [](char* value, size_t size) {
+    if (size > 0) {
+      value[size - 1] = '\0';
+    }
+  };
+
+  terminate(store.sntp1, sizeof(store.sntp1));
+  terminate(store.sntp2, sizeof(store.sntp2));
+  terminate(store.weatherlat, sizeof(store.weatherlat));
+  terminate(store.weatherlon, sizeof(store.weatherlon));
+  terminate(store.weatherkey, sizeof(store.weatherkey));
+  terminate(store.mdnsname, sizeof(store.mdnsname));
+
+  store.volume = constrain(store.volume, static_cast<uint8_t>(0), static_cast<uint8_t>(254));
+  store.balance = constrain(store.balance, static_cast<int8_t>(-16), static_cast<int8_t>(16));
+  store.trebble = constrain(store.trebble, static_cast<int8_t>(-16), static_cast<int8_t>(16));
+  store.middle = constrain(store.middle, static_cast<int8_t>(-16), static_cast<int8_t>(16));
+  store.bass = constrain(store.bass, static_cast<int8_t>(-16), static_cast<int8_t>(16));
+  store.smartstart = constrain(store.smartstart, static_cast<uint8_t>(0), static_cast<uint8_t>(2));
+  store.tzHour = constrain(store.tzHour, static_cast<int8_t>(-12), static_cast<int8_t>(14));
+  store.tzMin = constrain(store.tzMin, static_cast<int8_t>(0), static_cast<int8_t>(45));
+  store.tzMin = (store.tzMin / 15) * 15;
+  store.softapdelay = constrain(store.softapdelay, static_cast<uint8_t>(0), static_cast<uint8_t>(30));
+  store.brightness = constrain(store.brightness, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
+  store.contrast = constrain(store.contrast, static_cast<uint8_t>(0), static_cast<uint8_t>(100));
+  store.volsteps = constrain(store.volsteps, static_cast<uint8_t>(1), static_cast<uint8_t>(10));
+  store.encacc = constrain(store.encacc, static_cast<uint16_t>(0), static_cast<uint16_t>(700));
+  store.play_mode &= 0b11;
+  if (store.play_mode > MAX_PLAY_MODE) {
+    store.play_mode = PM_WEB;
+  }
+  store.irtlp = constrain(store.irtlp, static_cast<uint8_t>(10), static_cast<uint8_t>(80));
+  store.screensaverTimeout = constrain(store.screensaverTimeout, static_cast<uint16_t>(5), static_cast<uint16_t>(65520));
+  store.screensaverPlayingTimeout = constrain(store.screensaverPlayingTimeout, static_cast<uint16_t>(1), static_cast<uint16_t>(1080));
+  store.abuff = constrain(store.abuff, static_cast<uint16_t>(5), static_cast<uint16_t>(14));
+  store.timeSyncInterval = constrain(store.timeSyncInterval, static_cast<uint16_t>(15), static_cast<uint16_t>(1440));
+  store.timeSyncIntervalRTC = constrain(store.timeSyncIntervalRTC, static_cast<uint16_t>(1), static_cast<uint16_t>(168));
+  store.weatherSyncInterval = constrain(store.weatherSyncInterval, static_cast<uint16_t>(15), static_cast<uint16_t>(1440));
+  if (store.lcdAnimationType >= ANIM_TYPE_COUNT) {
+    store.lcdAnimationType = ANIM_FISH;
+  }
 }
 
 void Config::_setupVersion(){
@@ -441,7 +486,7 @@ void Config::setScreensaverPlayingBlank(bool val){
 }
 
 void Config::setLcdAnimationType(uint8_t val) {
-    
+    val = constrain(val, static_cast<uint8_t>(0), static_cast<uint8_t>(ANIM_TYPE_COUNT - 1));
     saveValue(&store.lcdAnimationType, val);
 #ifndef DSP_LCD
     display.putRequest(NEWMODE, PLAYER);

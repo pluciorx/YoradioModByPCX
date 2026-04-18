@@ -301,6 +301,7 @@ class Config {
     static void doSleep();
     uint16_t color565(uint8_t r, uint8_t g, uint8_t b);
     void _setupVersion();
+    void _sanitizeStore();
     void _initHW();
     bool _isFSempty();
     uint16_t _randomStation(){

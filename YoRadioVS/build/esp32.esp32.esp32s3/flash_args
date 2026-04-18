@@ -1,0 +1,5 @@
+--flash-mode dio --flash-freq 80m --flash-size 16MB  
+0x0 YORADI~1.BIN  
+0x8000 YORADI~3.BIN  
+0xe000 boot_app0.bin  
+0x10000 YORADI~2.BIN 

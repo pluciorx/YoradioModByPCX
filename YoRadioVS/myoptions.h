@@ -169,5 +169,9 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 #define IR_TIMEOUT            80              /*  see kTimeout description in IRremoteESP8266 example https://github.com/crankyoldgit/IRremoteESP8266/blob/master/examples/IRrecvDumpV2/IRrecvDumpV2.ino */
 
 /******************************************/
+#define OPTO1_PIN              1               /*  Optocoupler pin. Set to 255 if not used */
+#define OPTO2_PIN              2               /*  Optocoupler pin. Set to 255 if not used */
+#define OPTO3_PIN              45               /*  Optocoupler pin. Set to 255 if not used */
+#define OPTO4_PIN              46               /*  Optocoupler pin. Set to 255 if not used */
 
 #endif
