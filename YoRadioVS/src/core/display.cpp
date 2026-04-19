@@ -33,7 +33,7 @@ Nextion nextion;
   #define DSP_TASK_CORE_ID  0
 #endif
 #ifndef DSP_TASK_DELAY
-  #define DSP_TASK_DELAY pdMS_TO_TICKS(5) // cap for 50 fps
+  #define DSP_TASK_DELAY pdMS_TO_TICKS(10) // cap for 50 fps
 #endif
 
 #define DSP_QUEUE_TICKS 0

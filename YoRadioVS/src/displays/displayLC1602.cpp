@@ -80,6 +80,13 @@ DspCore::DspCore(): DSP_INIT {
   _soundMeterLastUpdate = 0;
   _soundMeterMeasL = 0;
   _soundMeterMeasR = 0;
+  _soundMeterPeakL = 0;
+  _soundMeterPeakR = 0;
+  _soundMeterPeakHoldUntilL = 0;
+  _soundMeterPeakHoldUntilR = 0;
+  _soundMeterAutoPeak = 160;
+  _soundMeterPrevLine[0] = '\0';
+  _soundMeterPrevClockLine[0] = '\0';
   _soundMeterVUMeterWasEnabled = false;
 }
 
@@ -102,6 +109,9 @@ void DspCore::apScreen() {
 void DspCore::initDisplay() {
 #ifdef LCD_I2C
   init();
+  #ifdef LCD_4002
+    Wire.setClock(400000);
+  #endif
   backlight();
 #else
   #ifdef LCD_2004
@@ -248,6 +258,13 @@ void DspCore::initScreensaver(AnimationType type) {
         _soundMeterLastUpdate = 0;
         _soundMeterMeasL = 0;
         _soundMeterMeasR = 0;
+        _soundMeterPeakL = 0;
+        _soundMeterPeakR = 0;
+        _soundMeterPeakHoldUntilL = 0;
+        _soundMeterPeakHoldUntilR = 0;
+        _soundMeterAutoPeak = 160;
+        _soundMeterPrevLine[0] = '\0';
+        _soundMeterPrevClockLine[0] = '\0';
         
         // Enable vumeter so get_VUlevel() returns actual values
         // Store previous state to restore later
@@ -327,9 +344,38 @@ void DspCore::showSoundMeterClock(const WidgetConfig& config) {
     // Copy time into position
     memcpy(line + pos, timeBuf, timeLen);
 
-    // Display on specified row
-    setCursor(0, config.top);
-    print(line);
+    // Diff-update clock row to avoid full-line I2C rewrite spikes
+    if (_soundMeterPrevClockLine[0] == '\0') {
+        setCursor(0, config.top);
+        print(line);
+        strcpy(_soundMeterPrevClockLine, line);
+        return;
+    }
+
+    if (strcmp(_soundMeterPrevClockLine, line) != 0) {
+        uint8_t start = 0;
+        while (start < displayWidth) {
+            while (start < displayWidth && _soundMeterPrevClockLine[start] == line[start]) {
+                start++;
+            }
+            if (start >= displayWidth) break;
+
+            uint8_t end = start;
+            while (end < displayWidth && _soundMeterPrevClockLine[end] != line[end]) {
+                end++;
+            }
+
+            char segment[41];
+            uint8_t len = end - start;
+            memcpy(segment, line + start, len);
+            segment[len] = '\0';
+            setCursor(start, config.top);
+            print(segment);
+            start = end;
+        }
+
+        strcpy(_soundMeterPrevClockLine, line);
+    }
 }
 
 void DspCore::updateSoundMeter() {
@@ -347,25 +393,89 @@ void DspCore::updateSoundMeter() {
       const uint8_t halfWidth = 8;
     #endif
     
+    // Update cadence tuned for HD44780 over I2C (prioritize smoothness)
+    const uint32_t now = millis();
+    const uint16_t updateIntervalMs = 10;
+    if (_soundMeterLastUpdate != 0 && (now - _soundMeterLastUpdate) < updateIntervalMs) {
+        return;
+    }
+    _soundMeterLastUpdate = now;
+
     // Get audio levels
     uint16_t vulevel = player.getVUlevel();
-    uint8_t L = map((vulevel >> 8) & 0xFF, 0, 255, 0, halfWidth);
-    uint8_t R = map(vulevel & 0xFF,         0, 255, 0, halfWidth);
+    uint8_t rawL = (vulevel >> 8) & 0xFF;
+    uint8_t rawR = vulevel & 0xFF;
+
+    // Dynamic auto-scaling so typical program material reaches more of the bar length
+    uint8_t framePeak = max(rawL, rawR);
+    if (framePeak > _soundMeterAutoPeak) {
+        _soundMeterAutoPeak = framePeak;
+    } else {
+        // Slow decay keeps gain stable but adapts to quieter content over time
+        const uint8_t autoPeakMin = 96;
+        if (_soundMeterAutoPeak > autoPeakMin) {
+            _soundMeterAutoPeak--;
+        }
+    }
+
+    uint8_t scaleTop = max<uint8_t>(_soundMeterAutoPeak, static_cast<uint8_t>(120));
+
+    // Piecewise mapping with adaptive top range
+    auto mapLevel = [&](uint8_t raw) -> uint8_t {
+        uint16_t scaled;
+        uint8_t pivot = scaleTop * 75 / 100;
+        if (pivot < 1) pivot = 1;
+
+        if (raw <= pivot) {
+            scaled = map(raw, 0, pivot, 0, halfWidth * 75 / 100);
+        } else {
+            scaled = map(raw, pivot, scaleTop, halfWidth * 75 / 100, halfWidth);
+        }
+
+        if (scaled > halfWidth) scaled = halfWidth;
+        return static_cast<uint8_t>(scaled);
+    };
+
+    uint8_t L = mapLevel(rawL);
+    uint8_t R = mapLevel(rawR);
     
-    // Smooth fade
-    const uint8_t fadeRate = 2;
     bool played = player.isRunning();
     
     if(played) {
-        _soundMeterMeasL = (L >= _soundMeterMeasL) ? L : (_soundMeterMeasL > fadeRate ? _soundMeterMeasL - fadeRate : 0);
-        _soundMeterMeasR = (R >= _soundMeterMeasR) ? R : (_soundMeterMeasR > fadeRate ? _soundMeterMeasR - fadeRate : 0);
+        uint8_t riseStepL = (_soundMeterMeasL < L) ? min<uint8_t>(3, L - _soundMeterMeasL) : 0;
+        uint8_t riseStepR = (_soundMeterMeasR < R) ? min<uint8_t>(3, R - _soundMeterMeasR) : 0;
+        uint8_t fadeRateL = (_soundMeterMeasL > (halfWidth * 8 / 10)) ? 2 : 1;
+        uint8_t fadeRateR = (_soundMeterMeasR > (halfWidth * 8 / 10)) ? 2 : 1;
+
+        if (L >= _soundMeterMeasL) _soundMeterMeasL += riseStepL;
+        else _soundMeterMeasL = (_soundMeterMeasL > fadeRateL ? _soundMeterMeasL - fadeRateL : 0);
+
+        if (R >= _soundMeterMeasR) _soundMeterMeasR += riseStepR;
+        else _soundMeterMeasR = (_soundMeterMeasR > fadeRateR ? _soundMeterMeasR - fadeRateR : 0);
     } else {
+        const uint8_t fadeRate = 2;
         if(_soundMeterMeasL > 0) _soundMeterMeasL = (_soundMeterMeasL > fadeRate) ? _soundMeterMeasL - fadeRate : 0;
         if(_soundMeterMeasR > 0) _soundMeterMeasR = (_soundMeterMeasR > fadeRate) ? _soundMeterMeasR - fadeRate : 0;
     }
     
     if(_soundMeterMeasL > halfWidth) _soundMeterMeasL = halfWidth;
     if(_soundMeterMeasR > halfWidth) _soundMeterMeasR = halfWidth;
+
+    // Peak hold marker with short hold then decay
+    const uint16_t peakHoldMs = 40;
+    if (_soundMeterMeasL >= _soundMeterPeakL) {
+        _soundMeterPeakL = _soundMeterMeasL;
+        _soundMeterPeakHoldUntilL = now + peakHoldMs;
+    } else if (now > _soundMeterPeakHoldUntilL && _soundMeterPeakL > 0) {
+        _soundMeterPeakL--;
+    }
+
+    if (_soundMeterMeasR >= _soundMeterPeakR) {
+        _soundMeterPeakR = _soundMeterMeasR;
+        _soundMeterPeakHoldUntilR = now + peakHoldMs;
+    } else if (now > _soundMeterPeakHoldUntilR && _soundMeterPeakR > 0) {
+        _soundMeterPeakR--;
+    }
     
     // Build sound meter line based on display width
     // Left channel: from left edge (0) towards center
@@ -389,12 +499,51 @@ void DspCore::updateSoundMeter() {
     for(uint8_t i = 0; i < _soundMeterMeasR; i++) {
         line[displayWidth - 1 - i] = (char)0xFF; // Solid block character
     }
+
+    // Draw peak markers when outside the filled body
+    if (_soundMeterPeakL > 0 && _soundMeterPeakL <= halfWidth) {
+        uint8_t peakPosL = _soundMeterPeakL - 1;
+        if (line[peakPosL] == ' ') {
+            line[peakPosL] = '|';
+        }
+    }
+    if (_soundMeterPeakR > 0 && _soundMeterPeakR <= halfWidth) {
+        uint8_t peakPosR = displayWidth - _soundMeterPeakR;
+        if (line[peakPosR] == ' ') {
+            line[peakPosR] = '|';
+        }
+    }
     
     line[displayWidth] = '\0';
     
-    // Display on line 2
-    setCursor(0, 1);
-    print(line);
+    // Display only changed segments on line 2 to reduce I2C traffic
+    if (_soundMeterPrevLine[0] == '\0') {
+        setCursor(0, 1);
+        print(line);
+        strcpy(_soundMeterPrevLine, line);
+    } else if (strcmp(_soundMeterPrevLine, line) != 0) {
+        uint8_t start = 0;
+        while (start < displayWidth) {
+            while (start < displayWidth && _soundMeterPrevLine[start] == line[start]) {
+                start++;
+            }
+            if (start >= displayWidth) break;
+
+            uint8_t end = start;
+            while (end < displayWidth && _soundMeterPrevLine[end] != line[end]) {
+                end++;
+            }
+
+            char segment[41];
+            uint8_t len = end - start;
+            memcpy(segment, line + start, len);
+            segment[len] = '\0';
+            setCursor(start, 1);
+            print(segment);
+            start = end;
+        }
+        strcpy(_soundMeterPrevLine, line);
+    }
     
     // Also update clock periodically
     if (network.timeinfo.tm_sec != lastSecond) {

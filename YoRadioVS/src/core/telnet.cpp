@@ -307,7 +307,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
     if (sscanf(str, "lcdanimationtype(%d)", &animation) == 1 || sscanf(str, "cli.lcdanimationtype(\"%d\")", &animation) == 1 || sscanf(str, "lcdanimationtype %d", &animation) == 1) {
 		animation = constrain(animation, 0, ANIM_TYPE_COUNT);
         config.setLcdAnimationType((uint8_t) animation);
-        config.enableScreensaver();
+        config.enableScreensaver(true);
         printf(clientId, "##CLI.LCDANIMATIONTYPE SET#: %s (%d)\n> ",
             animations[config.store.lcdAnimationType].animName, config.store.lcdAnimationType);
        

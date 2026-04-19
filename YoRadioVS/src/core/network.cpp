@@ -69,6 +69,8 @@ bool MyNetwork::wifiBegin(bool silent){
     delay(100);
     WiFi.mode(WIFI_STA);
     WiFi.begin(config.ssids[ls].ssid, config.ssids[ls].password);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    WiFi.setSleep(false);
     while (WiFi.status() != WL_CONNECTED) {
       if(!silent) Serial.print(".");
       delay(500);
