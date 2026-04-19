@@ -5,6 +5,65 @@
 #include "MPR121Touch/src/MPR121Touch.h"
 #include "userdefine.h"
 
+namespace {
+  constexpr uint8_t OPTO_INPUT_SELECTOR_PIN = 1;
+  constexpr uint8_t OPTO_AUX1_PIN = 2;
+  constexpr uint8_t OPTO_AUX2_PIN = 40;
+  constexpr uint8_t OPTO_AUX3_PIN = 39;
+
+  inline void pulseOpto(uint8_t pin, uint16_t durationMs) {
+    digitalWrite(pin, HIGH);
+    delay(durationMs);
+    digitalWrite(pin, LOW);
+  }
+}
+
+void optocouplers_setup() {
+  pinMode(OPTO_INPUT_SELECTOR_PIN, OUTPUT);
+  pinMode(OPTO_AUX1_PIN, OUTPUT);
+  pinMode(OPTO_AUX2_PIN, OUTPUT);
+  pinMode(OPTO_AUX3_PIN, OUTPUT);
+
+  digitalWrite(OPTO_INPUT_SELECTOR_PIN, LOW);
+  digitalWrite(OPTO_AUX1_PIN, LOW);
+  digitalWrite(OPTO_AUX2_PIN, LOW);
+  digitalWrite(OPTO_AUX3_PIN, LOW);
+}
+
+void opto_input_selector_pulse() {
+  pulseOpto(OPTO_INPUT_SELECTOR_PIN, 20);
+}
+
+uint8_t opto_input_selector_cycle() {
+  // 0=RADIO, 1=BT, 2=AUX
+  static uint8_t inputState = 0;
+  inputState = (inputState + 1) % 3;
+
+  if (inputState == 0) {
+    // AUX -> RADIO requires two pulses
+    opto_input_selector_pulse();
+    delay(20);
+    opto_input_selector_pulse();
+    return inputState;
+  }
+
+  // RADIO->BT or BT->AUX requires one pulse
+  opto_input_selector_pulse();
+  return inputState;
+}
+
+void opto_aux1_pulse(uint16_t durationMs) {
+  pulseOpto(OPTO_AUX1_PIN, durationMs);
+}
+
+void opto_aux2_pulse(uint16_t durationMs) {
+  pulseOpto(OPTO_AUX2_PIN, durationMs);
+}
+
+void opto_aux3_pulse(uint16_t durationMs) {
+  pulseOpto(OPTO_AUX3_PIN, durationMs);
+}
+
 // forward-declare / implement yoRadio actions used by the MPR121 handler
 // (these resolve the undefined-reference linker errors)
 

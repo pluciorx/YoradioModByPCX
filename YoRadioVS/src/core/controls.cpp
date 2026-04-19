@@ -7,6 +7,7 @@
 #include "network.h"
 #include "netserver.h"
 #include "../pluginsManager/pluginsManager.h"
+#include "../userdefine.h"
 
 long encOldPosition  = 0;
 long enc2OldPosition  = 0;
@@ -345,8 +346,19 @@ void irLoop() {
                 break;
               }
             case IR_AST: {
-                //ESP.restart();
-                onBtnClick(EVT_BTNMODE);
+                uint8_t inputState = opto_input_selector_cycle();
+                // Top line (station/meta): keep blank in RADIO, show EXTERNAL in BT/AUX
+                if (inputState == 0) {
+                  config.setStation("");
+                  config.setTitle("INPUT: RADIO");
+                } else if (inputState == 1) {
+                  config.setStation("EXTERNAL");
+                  config.setTitle("INPUT: BT");
+                } else {
+                  config.setStation("EXTERNAL");
+                  config.setTitle("INPUT: AUX");
+                }
+                display.putRequest(NEWSTATION);
                 break;
               }
           } /* switch (target) */

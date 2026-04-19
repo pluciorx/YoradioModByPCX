@@ -495,14 +495,26 @@ void Display::loop() {
             }
         }break;
         
-        case NEWSTATION: _station(); break;
+        case NEWSTATION: {
+#ifdef DSP_LCD
+            dsp.clearDsp();
+            _station();
+            _title();
+#else
+            _station();
+#endif
+            break;
+        }
+        break;
         case NEXTSTATION: _drawNextStationNum(request.payload); break;
         case DRAWPLAYLIST: _drawPlaylist(); break;
         case DRAWVOL: _volume(); break;
         case DBITRATE: {
-            char buf[20]; 
-            snprintf(buf, 20, bitrateFmt, config.station.bitrate); 
-            if(_bitrate) { _bitrate->setText(config.station.bitrate==0?"":buf); } 
+            char buf[20];
+            char out[22];
+            snprintf(buf, 20, bitrateFmt, config.station.bitrate);
+            snprintf(out, 22, " %s", buf); // keep a visible separator before bitrate area
+            if(_bitrate) { _bitrate->setText(config.station.bitrate==0?" ":out); }
             if(_fullbitrate) { 
               _fullbitrate->setBitrate(config.station.bitrate); 
               _fullbitrate->setFormat(config.configFmt); 

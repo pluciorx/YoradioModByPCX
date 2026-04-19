@@ -82,6 +82,7 @@ void setup() {
   config.init();
   display.init();
   player.init();
+  optocouplers_setup();
   mpr121_setup();
   registerAudioCallbacks();   
   network.begin();
