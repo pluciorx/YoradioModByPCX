@@ -465,6 +465,14 @@ void Display::loop() {
     return;
   }
   if(displayQueue==NULL || _locked) return;
+
+  // Hide small volume indicator after timeout without switching full screen mode.
+  if (_volHideAt > 0 && millis() >= _volHideAt) {
+    _volHideAt = 0;
+    #ifndef HIDE_VOL
+      if (_voltxt) _voltxt->setText("");
+    #endif
+  }
   if(!(_mode == SCREENSAVER ))  _pager->loop();
 
 #ifdef USE_NEXTION
@@ -495,17 +503,7 @@ void Display::loop() {
             }
         }break;
         
-        case NEWSTATION: {
-#ifdef DSP_LCD
-            dsp.clearDsp();
-            _station();
-            _title();
-#else
-            _station();
-#endif
-            break;
-        }
-        break;
+        case NEWSTATION: _station(); break;
         case NEXTSTATION: _drawNextStationNum(request.payload); break;
         case DRAWPLAYLIST: _drawPlaylist(); break;
         case DRAWVOL: _volume(); break;

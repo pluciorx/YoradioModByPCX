@@ -1698,10 +1698,22 @@ void Audio::computeVUlevel() {
   if(!_vuInitalized || !config.store.vumeter || cc!=everyn) return;
   if(cc==everyn) cc=0;*/
   int16_t reg = read_register(SCI_AICTRL3);
-  vuLeft = map((uint8_t)(reg & 0x00FF), 85, 92, 0, 255);
-  vuRight = map((uint8_t)(reg >> 8), 85, 92, 0, 255);
+  uint8_t rawLeft = (uint8_t)(reg & 0x00FF);
+  uint8_t rawRight = (uint8_t)(reg >> 8);
+
+  // Use a wider usable range so the meter is less pinned near maximum
+  vuLeft = constrain(map(rawLeft, 82, 96, 0, 255), 0, 255);
+  vuRight = constrain(map(rawRight, 82, 96, 0, 255), 0, 255);
   if(vuLeft>config.vuThreshold)  config.vuThreshold=vuLeft;
   if(vuRight>config.vuThreshold) config.vuThreshold=vuRight;
+
+  // Slowly decay the auto-threshold so the meter keeps adapting to rhythm
+  static uint32_t lastDecayMs = 0;
+  uint32_t now = millis();
+  if (config.vuThreshold > 32 && (now - lastDecayMs) >= 120) {
+    config.vuThreshold--;
+    lastDecayMs = now;
+  }
 }
 
 uint16_t Audio::get_VUlevel(uint16_t dimension){

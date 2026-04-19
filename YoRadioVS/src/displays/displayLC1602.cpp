@@ -395,7 +395,7 @@ void DspCore::updateSoundMeter() {
     
     // Update cadence tuned for HD44780 over I2C (prioritize smoothness)
     const uint32_t now = millis();
-    const uint16_t updateIntervalMs = 10;
+    const uint16_t updateIntervalMs = 50;
     if (_soundMeterLastUpdate != 0 && (now - _soundMeterLastUpdate) < updateIntervalMs) {
         return;
     }
@@ -406,31 +406,32 @@ void DspCore::updateSoundMeter() {
     uint8_t rawL = (vulevel >> 8) & 0xFF;
     uint8_t rawR = vulevel & 0xFF;
 
-    // Dynamic auto-scaling so typical program material reaches more of the bar length
+    // Dynamic auto-scaling tuned for more rhythmic motion and less max-hovering.
     uint8_t framePeak = max(rawL, rawR);
     if (framePeak > _soundMeterAutoPeak) {
         _soundMeterAutoPeak = framePeak;
     } else {
-        // Slow decay keeps gain stable but adapts to quieter content over time
-        const uint8_t autoPeakMin = 96;
+        // Faster decay adapts quicker after loud passages.
+        const uint8_t autoPeakMin = 110;
         if (_soundMeterAutoPeak > autoPeakMin) {
-            _soundMeterAutoPeak--;
+            _soundMeterAutoPeak -= (_soundMeterAutoPeak > 150) ? 2 : 1;
         }
     }
 
-    uint8_t scaleTop = max<uint8_t>(_soundMeterAutoPeak, static_cast<uint8_t>(120));
+    uint8_t scaleTop = max<uint8_t>(_soundMeterAutoPeak, static_cast<uint8_t>(140));
 
-    // Piecewise mapping with adaptive top range
+    // Suppress baseline activity and give more emphasis to peaks so bars
+    // spend more time below half instead of hovering in the middle/high zone.
     auto mapLevel = [&](uint8_t raw) -> uint8_t {
-        uint16_t scaled;
-        uint8_t pivot = scaleTop * 75 / 100;
-        if (pivot < 1) pivot = 1;
+        const uint8_t noiseFloor = 36;
+        if (raw <= noiseFloor) return 0;
 
-        if (raw <= pivot) {
-            scaled = map(raw, 0, pivot, 0, halfWidth * 75 / 100);
-        } else {
-            scaled = map(raw, pivot, scaleTop, halfWidth * 75 / 100, halfWidth);
-        }
+        uint8_t top = (scaleTop > noiseFloor) ? (scaleTop - noiseFloor) : 1;
+        uint16_t scaled = map(raw - noiseFloor, 0, top, 0, halfWidth);
+
+        // Square-law shaping: lower/mid levels occupy less of the bar,
+        // while stronger beats still reach the top.
+        scaled = (scaled * scaled + (halfWidth - 1)) / halfWidth;
 
         if (scaled > halfWidth) scaled = halfWidth;
         return static_cast<uint8_t>(scaled);
@@ -442,10 +443,10 @@ void DspCore::updateSoundMeter() {
     bool played = player.isRunning();
     
     if(played) {
-        uint8_t riseStepL = (_soundMeterMeasL < L) ? min<uint8_t>(3, L - _soundMeterMeasL) : 0;
-        uint8_t riseStepR = (_soundMeterMeasR < R) ? min<uint8_t>(3, R - _soundMeterMeasR) : 0;
-        uint8_t fadeRateL = (_soundMeterMeasL > (halfWidth * 8 / 10)) ? 2 : 1;
-        uint8_t fadeRateR = (_soundMeterMeasR > (halfWidth * 8 / 10)) ? 2 : 1;
+        uint8_t riseStepL = (_soundMeterMeasL < L) ? min<uint8_t>(4, L - _soundMeterMeasL) : 0;
+        uint8_t riseStepR = (_soundMeterMeasR < R) ? min<uint8_t>(4, R - _soundMeterMeasR) : 0;
+        uint8_t fadeRateL = (_soundMeterMeasL > (halfWidth * 7 / 10)) ? 3 : 2;
+        uint8_t fadeRateR = (_soundMeterMeasR > (halfWidth * 7 / 10)) ? 3 : 2;
 
         if (L >= _soundMeterMeasL) _soundMeterMeasL += riseStepL;
         else _soundMeterMeasL = (_soundMeterMeasL > fadeRateL ? _soundMeterMeasL - fadeRateL : 0);
@@ -462,7 +463,7 @@ void DspCore::updateSoundMeter() {
     if(_soundMeterMeasR > halfWidth) _soundMeterMeasR = halfWidth;
 
     // Peak hold marker with short hold then decay
-    const uint16_t peakHoldMs = 40;
+    const uint16_t peakHoldMs = 25;
     if (_soundMeterMeasL >= _soundMeterPeakL) {
         _soundMeterPeakL = _soundMeterMeasL;
         _soundMeterPeakHoldUntilL = now + peakHoldMs;

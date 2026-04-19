@@ -31,7 +31,7 @@ void optocouplers_setup() {
 }
 
 void opto_input_selector_pulse() {
-  pulseOpto(OPTO_INPUT_SELECTOR_PIN, 20);
+  pulseOpto(OPTO_INPUT_SELECTOR_PIN, 30);
 }
 
 uint8_t opto_input_selector_cycle() {
@@ -42,7 +42,7 @@ uint8_t opto_input_selector_cycle() {
   if (inputState == 0) {
     // AUX -> RADIO requires two pulses
     opto_input_selector_pulse();
-    delay(20);
+    delay(30);
     opto_input_selector_pulse();
     return inputState;
   }

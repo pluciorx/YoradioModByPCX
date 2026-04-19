@@ -58,6 +58,7 @@ class Display {
     Page *_boot;
     TextWidget *_bootstring, *_volip, *_voltxt, *_rssi, *_bitrate;
     bool _locked = false;
+    uint32_t _volHideAt = 0;
     uint8_t _bootStep;
     void _time(bool redraw = false);
     void _apScreen();

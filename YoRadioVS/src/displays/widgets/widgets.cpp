@@ -387,8 +387,9 @@ void VuWidget::_draw(){
   
   bool played = player.isRunning();
   if(played){
-    measL=(L>=measL)?measL + _bands.fadespeed:L;
-    measR=(R>=measR)?measR + _bands.fadespeed:R;
+    // Faster attack, gentler decay for a more musical/rhythmic response.
+    measL = (L >= measL) ? L : max<uint16_t>(L, measL > _bands.fadespeed ? measL - _bands.fadespeed : 0);
+    measR = (R >= measR) ? R : max<uint16_t>(R, measR > _bands.fadespeed ? measR - _bands.fadespeed : 0);
   }else{
     if(measL<dimension) measL += _bands.fadespeed;
     if(measR<dimension) measR += _bands.fadespeed;
