@@ -101,6 +101,7 @@
                 </div>
             </div>
             <div class="row-title"><span>screensaver</span></div>
+            <div class="row-title"><span>non-playing mode</span></div>
             <div class="flex-row group group_tft group_oled group_nextion hidden" style="margin-top:20px;">
                 <div class="inputwrap">
                     <span class="inputtitle">while not playing</span>
@@ -114,28 +115,11 @@
                 </div>
                 <div class="inputwrap">
                     <span class="inputtitle">timeout (sec)</span>
-                    <input type="number" id="scrt" data-command="screensavertimeout" value="" maxlength="3" min="5" max="65520" />
+                    <input type="number" id="scrt" data-command="screensavertimeout" value="" maxlength="3" min="5" max="15" />
                 </div>
-
-            </div>
-            <div class="flex-row group group_tft group_oled group_nextion hidden">
-                <div class="inputwrap">
-                    <span class="inputtitle">while playing</span>
-                    <div class="checkbox cbwtitle" id="scrpe" data-command="screensaverplayingenabled"><div class="knob"></div></div>
-                </div>
-                <div class="inputwrap">
-                    <span class="inputtitle">blank screen</span>
-                    <div class="checkbox cbwtitle" id="scrpb" data-command="screensaverplayingblank"><div class="knob"></div></div>
-                </div>
-                <div class="inputwrap">
-                    <span class="inputtitle">timeout (min)</span>
-                    <input type="number" id="scrpt" data-command="screensaverplayingtimeout" value="" maxlength="3" min="1" max="1080" />
-                </div>
-            </div>
-            <div class="flex-row group group_tft group_oled group_nextion hidden">
                 <div class="inputwrap">
                     <span class="inputtitle">animation type</span>
-                    <select id="lcdanim" data-command="lcdanimationtype" class="styled-select">
+                    <select id="lcdanimst" data-command="lcdanimationtypestopped" class="styled-select">
                         <option value="0">0 - Fish</option>
                         <option value="1">1 - Stars</option>
                         <option value="2">2 - Waves</option>
@@ -146,6 +130,33 @@
                     </select>
                 </div>
 
+            </div>
+            <div class="row-title"><span>playing mode</span></div>
+            <div class="flex-row group group_tft group_oled group_nextion hidden">
+                <div class="inputwrap">
+                    <span class="inputtitle">while playing</span>
+                    <div class="checkbox cbwtitle" id="scrpe" data-command="screensaverplayingenabled"><div class="knob"></div></div>
+                </div>
+                <div class="inputwrap">
+                    <span class="inputtitle">blank screen</span>
+                    <div class="checkbox cbwtitle" id="scrpb" data-command="screensaverplayingblank"><div class="knob"></div></div>
+                </div>
+                <div class="inputwrap">
+                    <span class="inputtitle">timeout (sec)</span>
+                    <input type="number" id="scrpt" data-command="screensaverplayingtimeout" value="" maxlength="5" min="1" max="15" />
+                </div>
+                <div class="inputwrap">
+                    <span class="inputtitle">animation type</span>
+                    <select id="lcdanimpl" data-command="lcdanimationtypeplaying" class="styled-select">
+                        <option value="0">0 - Fish</option>
+                        <option value="1">1 - Stars</option>
+                        <option value="2">2 - Waves</option>
+                        <option value="3">3 - Ball</option>
+                        <option value="4">4 - Snake</option>
+                        <option value="5">5 - Clock only</option>
+                        <option value="6">6 - Sound meter</option>
+                    </select>
+                </div>
             </div>
 
         </section><a name="controls"></a>

@@ -205,7 +205,7 @@ void TimeKeeper::_upScreensaver(){
   }
   if(config.store.screensaverPlayingEnabled && display.mode()==PLAYER && player.isRunning()){
     config.screensaverPlayingTicks++;
-    if(config.screensaverPlayingTicks > config.store.screensaverPlayingTimeout*60+SCREENSAVERSTARTUPDELAY){
+    if(config.screensaverPlayingTicks > config.store.screensaverPlayingTimeout + SCREENSAVERSTARTUPDELAY){
       if(config.store.screensaverPlayingBlank){
         display.putRequest(NEWMODE, SCREENBLANK);
       }else{

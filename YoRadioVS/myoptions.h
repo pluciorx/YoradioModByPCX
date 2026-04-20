@@ -174,4 +174,6 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 #define OPTO3_PIN              45               /*  Optocoupler pin. Set to 255 if not used */
 #define OPTO4_PIN              46               /*  Optocoupler pin. Set to 255 if not used */
 
+/*  MPR121 touch sensor. See description/available values in yoRadio/src/core/options.h  */
+#define MPR121                 true			/*  Use MPR121 touch sensor */
 #endif

@@ -43,6 +43,9 @@ Nextion nextion;
   #define DSQ_SEND_DELAY  pdMS_TO_TICKS(200)
 #endif
 
+static uint32_t _favoriteMarkerHideAt = 0;
+static char _favoriteMarkerSavedName[BUFLEN] = {0};
+
 QueueHandle_t displayQueue;
 
 static void loopDspTask(void * pvParameters){
@@ -364,8 +367,8 @@ void Display::_swichMode(displayMode_e newmode) {
     
     #ifdef DSP_LCD
       if (newmode == SCREENSAVER) {
-        // Initialize LCD animation from config
-        dsp.initScreensaver((AnimationType)config.store.lcdAnimationType);
+        // Initialize LCD animation from state-specific config
+        dsp.initScreensaver((AnimationType)(player.isRunning() ? config.store.lcdAnimationTypePlaying : config.store.lcdAnimationTypeStopped));
       } else {
         // SCREENBLANK - just clear display
         dsp.clearDsp(true);
@@ -473,6 +476,15 @@ void Display::loop() {
       if (_voltxt) _voltxt->setText("");
     #endif
   }
+  // Hide temporary favorite marker ("*") after 1 second and restore station text.
+  if (_favoriteMarkerHideAt > 0 && millis() >= _favoriteMarkerHideAt) {
+    _favoriteMarkerHideAt = 0;
+    if (_meta) {
+      _meta->setAlign(metaConf.widget.align);
+      _meta->setText(_favoriteMarkerSavedName[0] ? _favoriteMarkerSavedName : config.station.name);
+    }
+    _favoriteMarkerSavedName[0] = '\0';
+  }
   if(!(_mode == SCREENSAVER ))  _pager->loop();
 
 #ifdef USE_NEXTION
@@ -567,6 +579,17 @@ void Display::loop() {
           #ifndef HIDE_IP
             if(_volip) _volip->setText(config.ipToStr(WiFi.localIP()), iptxtFmt);
           #endif
+          break;
+        }
+        case FAVORITE_SAVED_MARKER: {
+          if (_meta) {
+            strlcpy(_favoriteMarkerSavedName, config.station.name, sizeof(_favoriteMarkerSavedName));
+            char marked[BUFLEN];
+            snprintf(marked, sizeof(marked), "%s *", config.station.name);
+            _meta->setAlign(metaConf.widget.align);
+            _meta->setText(marked);
+            _favoriteMarkerHideAt = millis() + 1000;
+          }
           break;
         }
         default: break;

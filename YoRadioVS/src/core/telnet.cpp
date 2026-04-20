@@ -273,7 +273,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
 
     // Query screensaver playing timeout
     if (strcmp(str, "cli.screensaver.playing.timeout") == 0 || strcmp(str, "screensaver.playing.timeout") == 0) {
-        printf(clientId, "##CLI.SCREENSAVER.PLAYING.TIMEOUT#: %d minutes\n> ", config.store.screensaverPlayingTimeout);
+        printf(clientId, "##CLI.SCREENSAVER.PLAYING.TIMEOUT#: %d seconds\n> ", config.store.screensaverPlayingTimeout);
         return;
     }
 
@@ -284,8 +284,9 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
     }
     // Query screensaver animation type
     if (strcmp(str, "cli.lcdAnimationType") == 0 || strcmp(str, "lcdAnimationType") == 0) {
-        printf(clientId, "##CLI.lcdAnimationType#: %s (%d)\n> ",
-            animations[config.store.lcdAnimationType].animName, config.store.lcdAnimationType);
+        printf(clientId, "##CLI.lcdAnimationType#: stopped=%s (%d), playing=%s (%d)\n> ",
+            animations[config.store.lcdAnimationTypeStopped].animName, config.store.lcdAnimationTypeStopped,
+            animations[config.store.lcdAnimationTypePlaying].animName, config.store.lcdAnimationTypePlaying);
 
         return;
     }
@@ -297,7 +298,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
         printf(clientId, "Timeout: %d seconds\n", config.store.screensaverTimeout);
         printf(clientId, "Blank Screen: %s\n", config.store.screensaverBlank ? "yes" : "no");
         printf(clientId, "Playing Mode Enabled: %s\n", config.store.screensaverPlayingEnabled ? "yes" : "no");
-        printf(clientId, "Playing Timeout: %d minutes\n", config.store.screensaverPlayingTimeout);
+        printf(clientId, "Playing Timeout: %d seconds\n", config.store.screensaverPlayingTimeout);
         printf(clientId, "Playing Blank Screen: %s\n> ", config.store.screensaverPlayingBlank ? "yes" : "no");
         return;
     }
@@ -305,12 +306,12 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
 
     int animation;
     if (sscanf(str, "lcdanimationtype(%d)", &animation) == 1 || sscanf(str, "cli.lcdanimationtype(\"%d\")", &animation) == 1 || sscanf(str, "lcdanimationtype %d", &animation) == 1) {
-		animation = constrain(animation, 0, ANIM_TYPE_COUNT);
+        animation = constrain(animation, 0, ANIM_TYPE_COUNT);
         config.setLcdAnimationType((uint8_t) animation);
         config.enableScreensaver(true);
-        printf(clientId, "##CLI.LCDANIMATIONTYPE SET#: %s (%d)\n> ",
-            animations[config.store.lcdAnimationType].animName, config.store.lcdAnimationType);
-       
+        printf(clientId, "##CLI.LCDANIMATIONTYPE SET#: stopped=%s (%d), playing=%s (%d)\n> ",
+            animations[config.store.lcdAnimationTypeStopped].animName, config.store.lcdAnimationTypeStopped,
+            animations[config.store.lcdAnimationTypePlaying].animName, config.store.lcdAnimationTypePlaying);
         return;
     }
 

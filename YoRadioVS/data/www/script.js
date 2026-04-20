@@ -5,6 +5,8 @@ const query = window.location.search;
 const params = new URLSearchParams(query);
 const yoTitle = 'ёRadio';
 let audiopreview=null;
+const THEME_STORAGE_KEY = 'yoradio-theme';
+const DEFAULT_THEME = 'legacy-gold';
 if(params.size>0){
   if(params.has('host')) hostname=params.get('host');
 }
@@ -29,6 +31,23 @@ function initWebSocket() {
   websocket.onmessage = onMessage;
 }
 function onLoad(event) { initWebSocket(); }
+function applyTheme(themeName){
+  const body = document.body;
+  if(!body) return;
+  const theme = themeName || DEFAULT_THEME;
+  body.classList.remove('theme-modern-blue', 'theme-modern-violet');
+  if(theme === 'modern-blue') body.classList.add('theme-modern-blue');
+  if(theme === 'modern-violet') body.classList.add('theme-modern-violet');
+  document.querySelectorAll('.theme-chip').forEach(el => {
+    el.classList.toggle('active', el.dataset.theme === theme);
+  });
+  localStorage.setItem(THEME_STORAGE_KEY, theme);
+  window.dispatchEvent(new CustomEvent('yoradio-theme-changed', { detail: { theme } }));
+}
+function loadSavedTheme(){
+  applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || DEFAULT_THEME);
+}
+window.addEventListener('DOMContentLoaded', loadSavedTheme);
 function pingUp(){
   if(!['/','/index.html'].includes(window.location.pathname)) return;
   pongtimeout = setTimeout(() => {
@@ -552,6 +571,7 @@ function continueLoading(mode){
       fetch(`player.html?${yoVersion}`).then(response => response.text()).then(player => { 
         getId('content').classList.add('idx');
         getId('content').innerHTML = player; 
+        loadSavedTheme();
         fetch('logo.svg').then(response => response.text()).then(svg => { 
           getId('logo').innerHTML = svg;
           hideSpinner();
@@ -636,6 +656,7 @@ function continueLoading(mode){
     if (command){
       if(target.classList.contains("local")){
         switch(command){
+          case "theme": applyTheme(target.dataset.theme); break;
           case "toggle": toggleTarget(target, target.dataset.target); break;
           case "settings": window.location.href=`http://${hostname}/settings.html`; break;
           case "plimport": break;

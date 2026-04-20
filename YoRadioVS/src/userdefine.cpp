@@ -1,4 +1,5 @@
 #include <Wire.h>
+#include <SPIFFS.h>
 #include "core/options.h"     // <-- ensure BUFLEN and other macros are defined
 #include "core/config.h"
 #include "core/player.h"
@@ -107,20 +108,63 @@ void yoradio_toggle_mute() {
 
 // Lightweight favorites storage (RAM-backed). Replace with persistent storage later.
 static uint16_t _mpr121_favorites[12] = {0};
+static bool _mpr121_favoritesLoaded = false;
+static constexpr const char* MPR121_FAVORITES_PATH = "/mpr121_favorites.bin";
+
+static void mpr121_load_favorites() {
+  if (_mpr121_favoritesLoaded) return;
+
+  memset(_mpr121_favorites, 0, sizeof(_mpr121_favorites));
+  if (!SPIFFS.exists(MPR121_FAVORITES_PATH)) {
+    _mpr121_favoritesLoaded = true;
+    return;
+  }
+
+  File f = SPIFFS.open(MPR121_FAVORITES_PATH, "r");
+  if (!f) {
+    Serial.println("[MPR121] favorites open(read) failed");
+    _mpr121_favoritesLoaded = true;
+    return;
+  }
+
+  size_t read = f.read((uint8_t*)_mpr121_favorites, sizeof(_mpr121_favorites));
+  f.close();
+
+  if (read < sizeof(_mpr121_favorites)) {
+    memset(((uint8_t*)_mpr121_favorites) + read, 0, sizeof(_mpr121_favorites) - read);
+  }
+
+  _mpr121_favoritesLoaded = true;
+}
+
+static void mpr121_save_favorites() {
+  File f = SPIFFS.open(MPR121_FAVORITES_PATH, "w");
+  if (!f) {
+    Serial.println("[MPR121] favorites open(write) failed");
+    return;
+  }
+  f.write((const uint8_t*)_mpr121_favorites, sizeof(_mpr121_favorites));
+  f.close();
+}
 
 void yoradio_save_favorite(uint8_t btn) {
   if (btn >= sizeof(_mpr121_favorites)/sizeof(_mpr121_favorites[0])) return;
+  mpr121_load_favorites();
   _mpr121_favorites[btn] = config.lastStation();
-  // TODO: persist to config/EEPROM if you want favorites retained across reboots
+  mpr121_save_favorites();
+  config.showFavoriteSavedMarker();
 }
 
 void yoradio_goto_favorite(uint8_t btn) {
   if (btn >= sizeof(_mpr121_favorites)/sizeof(_mpr121_favorites[0])) return;
+  mpr121_load_favorites();
   uint16_t st = _mpr121_favorites[btn];
   if (st == 0) return;
   player.sendCommand({PR_PLAY, (int)st});
 }
 
+
+#if MPR121
 // MPR121 instance (keep address macro or replace with literal if needed)
 static MPR121Touch touch(MPR121_ADDR, &Wire);
 
@@ -163,6 +207,7 @@ static void handleTouch(uint8_t e, MPR121Event ev) {
 }
 
 void mpr121_setup() {
+  mpr121_load_favorites();
   // more sensitive for long wires:
   touch.setThresholds(6, 3);      // touch, release (try 6/3, 8/4, ... )
   touch.setDebounceMs(40);        // reduce chatter, larger = fewer false triggers
@@ -180,3 +225,4 @@ void mpr121_setup() {
 void mpr121_loop() {
   touch.update();
 }
+#endif // MPR121

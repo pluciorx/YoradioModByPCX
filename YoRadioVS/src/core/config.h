@@ -30,7 +30,7 @@
   #define ESP_ARDUINO_3 1
 #endif
 
-#define CONFIG_VERSION  6
+#define CONFIG_VERSION  8
 
 enum playMode_e      : uint8_t  { PM_WEB=0, PM_SDCARD=1 };
 
@@ -134,7 +134,9 @@ struct config_t
   uint16_t  timeSyncInterval;
   uint16_t  timeSyncIntervalRTC;
   uint16_t  weatherSyncInterval;
-  uint8_t   lcdAnimationType;     // 0=FISH, 1=STARS, 2=WAVES, 3=BALL, 4=SNAKE, 5=CLOCK_ONLY, 6=SOUND_METER (validated against ANIM_TYPE_COUNT)
+  uint8_t   lcdAnimationType;     // legacy/shared animation selector kept for migration compatibility
+  uint8_t   lcdAnimationTypeStopped;
+  uint8_t   lcdAnimationTypePlaying;
 };
 
 #if IR_PIN!=255
@@ -246,7 +248,10 @@ class Config {
     void setScreensaverPlayingTimeout(uint16_t val);
     void setScreensaverPlayingBlank(bool val);
     void setLcdAnimationType(uint8_t val);
+    void setLcdAnimationTypeStopped(uint8_t val);
+    void setLcdAnimationTypePlaying(uint8_t val);
     void setSoundMeterEnabled(bool val);
+    void showFavoriteSavedMarker();
     void setSntpOne(const char *val);
     void setShowweather(bool val);
     void setWeatherKey(const char *val);

@@ -172,13 +172,19 @@ void Config::_sanitizeStore(){
   }
   store.irtlp = constrain(store.irtlp, static_cast<uint8_t>(10), static_cast<uint8_t>(80));
   store.screensaverTimeout = constrain(store.screensaverTimeout, static_cast<uint16_t>(5), static_cast<uint16_t>(65520));
-  store.screensaverPlayingTimeout = constrain(store.screensaverPlayingTimeout, static_cast<uint16_t>(1), static_cast<uint16_t>(1080));
+  store.screensaverPlayingTimeout = constrain(store.screensaverPlayingTimeout, static_cast<uint16_t>(1), static_cast<uint16_t>(65520));
   store.abuff = constrain(store.abuff, static_cast<uint16_t>(5), static_cast<uint16_t>(14));
   store.timeSyncInterval = constrain(store.timeSyncInterval, static_cast<uint16_t>(15), static_cast<uint16_t>(1440));
   store.timeSyncIntervalRTC = constrain(store.timeSyncIntervalRTC, static_cast<uint16_t>(1), static_cast<uint16_t>(168));
   store.weatherSyncInterval = constrain(store.weatherSyncInterval, static_cast<uint16_t>(15), static_cast<uint16_t>(1440));
   if (store.lcdAnimationType >= ANIM_TYPE_COUNT) {
     store.lcdAnimationType = ANIM_FISH;
+  }
+  if (store.lcdAnimationTypeStopped >= ANIM_TYPE_COUNT) {
+    store.lcdAnimationTypeStopped = ANIM_FISH;
+  }
+  if (store.lcdAnimationTypePlaying >= ANIM_TYPE_COUNT) {
+    store.lcdAnimationTypePlaying = ANIM_SOUND_METER;
   }
 }
 
@@ -213,6 +219,19 @@ void Config::_setupVersion(){
       break;
     case 6:
       saveValue(&store.soundMeterEnabled, true);  // Default to enabled for existing users
+      break;
+    case 7:
+      // Migration: screensaverPlayingTimeout was minutes, now seconds.
+      // Convert only values in legacy minutes range to avoid double conversion.
+      if (store.screensaverPlayingTimeout <= 1080) {
+        uint32_t sec = (uint32_t)store.screensaverPlayingTimeout * 60U;
+        if (sec > 65520U) sec = 65520U;
+        saveValue(&store.screensaverPlayingTimeout, (uint16_t)sec);
+      }
+      break;
+    case 8:
+      saveValue(&store.lcdAnimationTypeStopped, store.lcdAnimationType, false, true);
+      saveValue(&store.lcdAnimationTypePlaying, (uint8_t)ANIM_SOUND_METER, true, true);
       break;
     default:
       break;
@@ -500,7 +519,7 @@ void Config::setScreensaverPlayingEnabled(bool val){
 #endif
 }
 void Config::setScreensaverPlayingTimeout(uint16_t val){
-  val=constrain(val,1,1080);
+  val=constrain(val,1,65520);
   config.saveValue(&config.store.screensaverPlayingTimeout, val);
 #ifndef DSP_LCD
   display.putRequest(NEWMODE, PLAYER);
@@ -516,6 +535,24 @@ void Config::setScreensaverPlayingBlank(bool val){
 void Config::setLcdAnimationType(uint8_t val) {
     val = constrain(val, static_cast<uint8_t>(0), static_cast<uint8_t>(ANIM_TYPE_COUNT - 1));
     saveValue(&store.lcdAnimationType, val);
+    saveValue(&store.lcdAnimationTypeStopped, val, false);
+    saveValue(&store.lcdAnimationTypePlaying, val);
+#ifndef DSP_LCD
+    display.putRequest(NEWMODE, PLAYER);
+#endif
+}
+
+void Config::setLcdAnimationTypeStopped(uint8_t val) {
+    val = constrain(val, static_cast<uint8_t>(0), static_cast<uint8_t>(ANIM_TYPE_COUNT - 1));
+    saveValue(&store.lcdAnimationTypeStopped, val);
+#ifndef DSP_LCD
+    display.putRequest(NEWMODE, PLAYER);
+#endif
+}
+
+void Config::setLcdAnimationTypePlaying(uint8_t val) {
+    val = constrain(val, static_cast<uint8_t>(0), static_cast<uint8_t>(ANIM_TYPE_COUNT - 1));
+    saveValue(&store.lcdAnimationTypePlaying, val);
 #ifndef DSP_LCD
     display.putRequest(NEWMODE, PLAYER);
 #endif
@@ -599,8 +636,10 @@ void Config::resetSystem(const char *val, uint8_t clientId){
     saveValue(&store.screensaverTimeout, (uint16_t)20);
     saveValue(&store.screensaverBlank, false);
     saveValue(&store.screensaverPlayingEnabled, false);
-    saveValue(&store.screensaverPlayingTimeout, (uint16_t)5);
-    saveValue(&store.screensaverPlayingBlank, false);
+    saveValue(&store.screensaverPlayingTimeout, (uint16_t)300);
+    saveValue(&store.screensaverPlayingBlank, false, false);
+    saveValue(&store.lcdAnimationTypeStopped, (uint8_t)ANIM_FISH, false);
+    saveValue(&store.lcdAnimationTypePlaying, (uint8_t)ANIM_SOUND_METER);
     display.putRequest(NEWMODE, CLEAR); display.putRequest(NEWMODE, PLAYER);
     netserver.requestOnChange(GETSCREEN, clientId);
     return;
@@ -700,13 +739,15 @@ void Config::setDefaults() {
   store.screensaverEnabled = true;
   store.screensaverTimeout = 20;
   store.screensaverBlank = false;
-  store.lcdAnimationType = AnimationType::ANIM_SOUND_METER;  // Default to SOUND_METER animation
+  store.lcdAnimationType = AnimationType::ANIM_SOUND_METER;  // legacy shared field
   snprintf(store.mdnsname, MDNS_LENGTH, "yoradio-%x", (unsigned int)getChipId());
   store.skipPlaylistUpDown = false;
   store.screensaverPlayingEnabled = false;
-  store.screensaverPlayingTimeout = 5;
+  store.screensaverPlayingTimeout = 300;
   store.screensaverPlayingBlank = false;
   store.soundMeterEnabled = true;  // Default to enabled
+  store.lcdAnimationTypeStopped = AnimationType::ANIM_FISH;
+  store.lcdAnimationTypePlaying = AnimationType::ANIM_SOUND_METER;
   store.abuff = VS1053_CS==255?7:10;
   store.telnet = true;
   store.watchdog = true;
@@ -758,6 +799,10 @@ void Config::setTone(int8_t bass, int8_t middle, int8_t trebble) {
   saveValue(&store.trebble, trebble);
   player.setTone(store.bass, store.middle, store.trebble);
   netserver.requestOnChange(EQUALIZER, 0);
+}
+
+void Config::showFavoriteSavedMarker() {
+  display.putRequest(FAVORITE_SAVED_MARKER);
 }
 
 void Config::setSmartStart(uint8_t ss) {
@@ -1178,7 +1223,7 @@ void Config::bootInfo() {
   BOOTLOG("encoders:\tl1=%d, b1=%d, r1=%d, pullup=%s, l2=%d, b2=%d, r2=%d, pullup=%s", 
           ENC_BTNL, ENC_BTNB, ENC_BTNR, ENC_INTERNALPULLUP?"true":"false", ENC2_BTNL, ENC2_BTNB, ENC2_BTNR, ENC2_INTERNALPULLUP?"true":"false");
   BOOTLOG("ir:\t\t%d", IR_PIN);
-  BOOTLOG("lcdanimationtype:\t\t%s", animations[store.lcdAnimationType].animName);
+  BOOTLOG("lcdanimationtype:\tstopped=%s playing=%s", animations[store.lcdAnimationTypeStopped].animName, animations[store.lcdAnimationTypePlaying].animName);
   if(SDC_CS!=255) BOOTLOG("SD:\t\t%d", SDC_CS);
   BOOTLOG("------------------------------------------------");
 }

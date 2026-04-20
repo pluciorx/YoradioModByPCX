@@ -72,6 +72,8 @@ bool CommandHandler::exec(const char *command, const char *value, uint8_t cid) {
   if (strEquals(command, "screensaverplayingtimeout")){ config.setScreensaverPlayingTimeout(static_cast<uint16_t>(atoi(value))); return true; }
   if (strEquals(command, "screensaverplayingblank"))  { config.setScreensaverPlayingBlank(static_cast<bool>(atoi(value))); return true; }
   if (strEquals(command, "lcdanimationtype")) { config.setLcdAnimationType(static_cast<uint8_t>(atoi(value))); return true; }
+  if (strEquals(command, "lcdanimationtypestopped")) { config.setLcdAnimationTypeStopped(static_cast<uint8_t>(atoi(value))); return true; }
+  if (strEquals(command, "lcdanimationtypeplaying")) { config.setLcdAnimationTypePlaying(static_cast<uint8_t>(atoi(value))); return true; }
   if (strEquals(command, "soundmeter"))   { config.setSoundMeterEnabled(static_cast<bool>(atoi(value))); return true; }
   if (strEquals(command, "abuff")){ config.saveValue(&config.store.abuff, static_cast<uint16_t>(atoi(value))); return true; }
   if (strEquals(command, "telnet")){ config.saveValue(&config.store.telnet, static_cast<bool>(atoi(value))); telnet.toggle(); return true; }

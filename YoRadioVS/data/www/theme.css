@@ -14,6 +14,81 @@
 --section-gradient:     #111111;
 --section-border:       #555555;
 --heapbar-color:        #3ea220;
+    --glass-bg:             rgba(16,18,28,0.72);
+    --glass-border:         rgba(255,255,255,0.08);
+    --nav-bg:               rgba(10,12,18,0.72);
+    --nav-active-bg:        rgba(255,255,255,0.06);
+    --card-shadow:          0 18px 44px rgba(0,0,0,0.42);
+    --glow-accent:          rgba(227,210,95,0.34);
+    --radius-sm:            10px;
+    --radius-md:            18px;
+    --radius-lg:            999px;
+    --glass-blur:           12px;
+    --focus-border:         rgba(227,210,95,0.55);
+    --focus-ring:           rgba(227,210,95,0.10);
+    --button-bg:            rgba(227,210,95,0.06);
+    --button-file-bg:       rgba(227,210,95,0.07);
+    --playlist-active-end:  rgba(184,164,58,0.60);
+    --muted-text:           rgba(200,200,208,0.60);
+    --section-title-text:   #aaaaaa;
+}
+
+body.theme-modern-blue {
+    --main-bg-color:        #07111f;
+    --main-text-color:      #b9c8de;
+    --main-hl-color:        #f4fbff;
+    --odd-bg-color:         #101a2b;
+    --accent-color:         #63c8ff;
+    --accent-dark:          #1f87d6;
+    --accent-text-color:    #02111f;
+    --input-border:         #23344c;
+    --logo:                 #63c8ff;
+    --logo-shadow:          #246ca8;
+    --playlist-hover:       #18263b;
+    --section-gradient:     #0f1828;
+    --section-border:       #2d4665;
+    --glass-bg:             rgba(11,19,34,0.72);
+    --glass-border:         rgba(115,190,255,0.14);
+    --nav-bg:               rgba(7,13,24,0.76);
+    --nav-active-bg:        rgba(99,200,255,0.09);
+    --card-shadow:          0 18px 44px rgba(0,14,34,0.50);
+    --glow-accent:          rgba(99,200,255,0.36);
+    --focus-border:         rgba(99,200,255,0.58);
+    --focus-ring:           rgba(99,200,255,0.12);
+    --button-bg:            rgba(99,200,255,0.07);
+    --button-file-bg:       rgba(99,200,255,0.08);
+    --playlist-active-end:  rgba(47,128,214,0.58);
+    --muted-text:           rgba(194,214,236,0.66);
+    --section-title-text:   #afc2da;
+}
+
+body.theme-modern-violet {
+    --main-bg-color:        #0b0715;
+    --main-text-color:      #d3cce8;
+    --main-hl-color:        #fff8ff;
+    --odd-bg-color:         #171126;
+    --accent-color:         #b996ff;
+    --accent-dark:          #7c4dff;
+    --accent-text-color:    #0d0618;
+    --input-border:         #332651;
+    --logo:                 #c5a5ff;
+    --logo-shadow:          #6746ae;
+    --playlist-hover:       #24183a;
+    --section-gradient:     #140f22;
+    --section-border:       #4c3a75;
+    --glass-bg:             rgba(18,12,30,0.74);
+    --glass-border:         rgba(197,165,255,0.14);
+    --nav-bg:               rgba(14,10,24,0.78);
+    --nav-active-bg:        rgba(185,150,255,0.09);
+    --card-shadow:          0 18px 44px rgba(18,0,40,0.48);
+    --glow-accent:          rgba(185,150,255,0.34);
+    --focus-border:         rgba(185,150,255,0.56);
+    --focus-ring:           rgba(185,150,255,0.12);
+    --button-bg:            rgba(185,150,255,0.07);
+    --button-file-bg:       rgba(185,150,255,0.08);
+    --playlist-active-end:  rgba(124,77,255,0.56);
+    --muted-text:           rgba(215,203,241,0.66);
+    --section-title-text:   #c1b4e3;
 }
 
 /* ensure UI elements are above the canvas background */

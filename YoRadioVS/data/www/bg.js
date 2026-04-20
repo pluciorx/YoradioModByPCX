@@ -25,11 +25,36 @@
   let W = 0, H = 0, particles = [], maxParticles = 160, connectDist = 180, neighbors = 4;
   let globalTime = 0;
 
-  // yoRadio palette
-  const YO_GOLD = '227,210,95';
-  const YO_GOLD_DARK = '140,120,45';
-  const BG_TOP = '8,4,20';
-  const BG_BOT = '18,10,30';
+  const THEMES = {
+    'legacy-gold': {
+      line: '227,210,95',
+      lineDark: '140,120,45',
+      bgTop: '8,4,20',
+      bgBot: '18,10,30'
+    },
+    'modern-blue': {
+      line: '99,200,255',
+      lineDark: '31,135,214',
+      bgTop: '4,12,28',
+      bgBot: '8,24,46'
+    },
+    'modern-violet': {
+      line: '185,150,255',
+      lineDark: '124,77,255',
+      bgTop: '14,7,26',
+      bgBot: '24,11,42'
+    }
+  };
+  let activeTheme = THEMES['legacy-gold'];
+
+  function setTheme(themeName){
+    activeTheme = THEMES[themeName] || THEMES['legacy-gold'];
+  }
+
+  setTheme(localStorage.getItem('yoradio-theme') || 'legacy-gold');
+  window.addEventListener('yoradio-theme-changed', (ev) => {
+    setTheme(ev.detail && ev.detail.theme ? ev.detail.theme : 'legacy-gold');
+  });
 
   function rand(min, max){ return Math.random() * (max - min) + min; }
 
@@ -166,8 +191,8 @@
   function draw(){
     ctx.clearRect(0,0,W,H);
     const g = ctx.createLinearGradient(0,0,0,H);
-    g.addColorStop(0, `rgba(${BG_TOP},0.92)`);
-    g.addColorStop(1, `rgba(${BG_BOT},0.95)`);
+    g.addColorStop(0, `rgba(${activeTheme.bgTop},0.92)`);
+    g.addColorStop(1, `rgba(${activeTheme.bgBot},0.95)`);
     ctx.fillStyle = g;
     ctx.fillRect(0,0,W,H);
 
@@ -194,7 +219,7 @@
         const dist = Math.sqrt(nb.d2);
         // subtler glow and smaller stroke
         const alpha = 0.18 * (1 - dist / connectDist);
-        ctx.strokeStyle = `rgba(${YO_GOLD},${(alpha*0.85).toFixed(3)})`;
+        ctx.strokeStyle = `rgba(${activeTheme.line},${(alpha*0.85).toFixed(3)})`;
         ctx.lineWidth = 1.8;
         ctx.beginPath();
         const ax = a.x, ay = a.y;
@@ -230,7 +255,7 @@
         const b = particles[nb.idx];
         const dist = Math.sqrt(nb.d2);
         const alpha = 0.22 * (1 - dist / connectDist);
-        ctx.strokeStyle = `rgba(${YO_GOLD_DARK},${alpha.toFixed(3)})`;
+        ctx.strokeStyle = `rgba(${activeTheme.lineDark},${alpha.toFixed(3)})`;
         ctx.beginPath();
         const ax = a.x, ay = a.y;
         const bx = ax - nb.dx;
@@ -246,7 +271,7 @@
     // draw points
     for(let p of particles){
       ctx.beginPath();
-      ctx.fillStyle = `rgba(${YO_GOLD},1)`;
+      ctx.fillStyle = `rgba(${activeTheme.line},1)`;
       ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
       ctx.fill();
       ctx.strokeStyle = `rgba(0,0,0,0.18)`;
