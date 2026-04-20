@@ -84,7 +84,7 @@ DspCore::DspCore(): DSP_INIT {
   _soundMeterPeakR = 0;
   _soundMeterPeakHoldUntilL = 0;
   _soundMeterPeakHoldUntilR = 0;
-  _soundMeterAutoPeak = 160;
+  _soundMeterAutoPeak = 80;
   _soundMeterPrevLine[0] = '\0';
   _soundMeterPrevClockLine[0] = '\0';
   _soundMeterVUMeterWasEnabled = false;
@@ -262,7 +262,7 @@ void DspCore::initScreensaver(AnimationType type) {
         _soundMeterPeakR = 0;
         _soundMeterPeakHoldUntilL = 0;
         _soundMeterPeakHoldUntilR = 0;
-        _soundMeterAutoPeak = 160;
+        _soundMeterAutoPeak = 80;
         _soundMeterPrevLine[0] = '\0';
         _soundMeterPrevClockLine[0] = '\0';
         
@@ -395,7 +395,7 @@ void DspCore::updateSoundMeter() {
     
     // Update cadence tuned for HD44780 over I2C (prioritize smoothness)
     const uint32_t now = millis();
-    const uint16_t updateIntervalMs = 50;
+    const uint16_t updateIntervalMs = (uint16_t)(1000 / 15); // slightly under 24 FPS.
     if (_soundMeterLastUpdate != 0 && (now - _soundMeterLastUpdate) < updateIntervalMs) {
         return;
     }
@@ -406,32 +406,27 @@ void DspCore::updateSoundMeter() {
     uint8_t rawL = (vulevel >> 8) & 0xFF;
     uint8_t rawR = vulevel & 0xFF;
 
-    // Dynamic auto-scaling tuned for more rhythmic motion and less max-hovering.
+    // Dynamic auto-scaling — envelope values are instantaneous so they swing widely.
     uint8_t framePeak = max(rawL, rawR);
     if (framePeak > _soundMeterAutoPeak) {
         _soundMeterAutoPeak = framePeak;
     } else {
-        // Faster decay adapts quicker after loud passages.
-        const uint8_t autoPeakMin = 110;
+        // Slow decay keeps the scale stable across a song section.
+        const uint8_t autoPeakMin = 60;
         if (_soundMeterAutoPeak > autoPeakMin) {
-            _soundMeterAutoPeak -= (_soundMeterAutoPeak > 150) ? 2 : 1;
+            _soundMeterAutoPeak--;
         }
     }
 
-    uint8_t scaleTop = max<uint8_t>(_soundMeterAutoPeak, static_cast<uint8_t>(140));
+    uint8_t scaleTop = max<uint8_t>(_soundMeterAutoPeak, static_cast<uint8_t>(80));
 
-    // Suppress baseline activity and give more emphasis to peaks so bars
-    // spend more time below half instead of hovering in the middle/high zone.
+    // Simple linear map — the envelope values already swing naturally.
     auto mapLevel = [&](uint8_t raw) -> uint8_t {
-        const uint8_t noiseFloor = 36;
+        const uint8_t noiseFloor = 4;
         if (raw <= noiseFloor) return 0;
 
         uint8_t top = (scaleTop > noiseFloor) ? (scaleTop - noiseFloor) : 1;
         uint16_t scaled = map(raw - noiseFloor, 0, top, 0, halfWidth);
-
-        // Square-law shaping: lower/mid levels occupy less of the bar,
-        // while stronger beats still reach the top.
-        scaled = (scaled * scaled + (halfWidth - 1)) / halfWidth;
 
         if (scaled > halfWidth) scaled = halfWidth;
         return static_cast<uint8_t>(scaled);
@@ -443,16 +438,12 @@ void DspCore::updateSoundMeter() {
     bool played = player.isRunning();
     
     if(played) {
-        uint8_t riseStepL = (_soundMeterMeasL < L) ? min<uint8_t>(4, L - _soundMeterMeasL) : 0;
-        uint8_t riseStepR = (_soundMeterMeasR < R) ? min<uint8_t>(4, R - _soundMeterMeasR) : 0;
-        uint8_t fadeRateL = (_soundMeterMeasL > (halfWidth * 7 / 10)) ? 3 : 2;
-        uint8_t fadeRateR = (_soundMeterMeasR > (halfWidth * 7 / 10)) ? 3 : 2;
+        // Fast attack, moderate decay — lets beats punch through
+        if (L >= _soundMeterMeasL) _soundMeterMeasL = L;  // instant attack
+        else _soundMeterMeasL = (_soundMeterMeasL > 1 ? _soundMeterMeasL - 1 : 0);
 
-        if (L >= _soundMeterMeasL) _soundMeterMeasL += riseStepL;
-        else _soundMeterMeasL = (_soundMeterMeasL > fadeRateL ? _soundMeterMeasL - fadeRateL : 0);
-
-        if (R >= _soundMeterMeasR) _soundMeterMeasR += riseStepR;
-        else _soundMeterMeasR = (_soundMeterMeasR > fadeRateR ? _soundMeterMeasR - fadeRateR : 0);
+        if (R >= _soundMeterMeasR) _soundMeterMeasR = R;  // instant attack
+        else _soundMeterMeasR = (_soundMeterMeasR > 1 ? _soundMeterMeasR - 1 : 0);
     } else {
         const uint8_t fadeRate = 2;
         if(_soundMeterMeasL > 0) _soundMeterMeasL = (_soundMeterMeasL > fadeRate) ? _soundMeterMeasL - fadeRate : 0;

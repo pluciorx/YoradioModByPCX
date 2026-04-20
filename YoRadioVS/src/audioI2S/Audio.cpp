@@ -6310,8 +6310,18 @@ uint16_t Audio::getVUlevel() {
     if (!m_f_running) return 0;
     AUDIO_LOG_DEBUG("%i", (uint8_t)m_vu_items.left);
     // avg 0 ... 255                                                                                  MSB          LSB
-    return ((uint8_t)m_vu_items.right_peak << 8) + (uint8_t)m_vu_items.left_peak; // returns  rrrrrrrrllllllll
+    return ((uint8_t)m_vu_items.right_peak << 8) + (uint8_t)m_vu_items.left_peak;
+
 }
+
+// —————————————————————————————————————————————    ————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+uint16_t Audio::getVUlevelEnvelope(){
+    if (!m_f_running) return 0;
+    AUDIO_LOG_DEBUG("%i", (uint8_t)m_vu_items.left);
+    // avg 0 ... 255                                                                                  MSB          LSB
+    return ((uint8_t)m_vu_items.right << 8) + (uint8_t)m_vu_items.left; // returns  rrrrrrrrllllllll  (envelope, not peak)
+}
+
 // —————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 void Audio::setTone(float gainLowPass, float gainBandPass, float gainHighPass) {
 

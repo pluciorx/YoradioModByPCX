@@ -32,21 +32,49 @@ void u8fix(char *src){
 
 bool Config::_isFSempty() {
   const char* reqiredFiles[] = {"dragpl.js.gz","ir.css.gz","irrecord.html.gz","ir.js.gz","logo.svg.gz","options.html.gz","player.html.gz","script.js.gz",
-                                "style.css.gz","updform.html.gz","theme.css"};
-  const uint8_t reqiredFilesSize = 11;
-  char fullpath[28];
+                                "style.css.gz","updform.html.gz","theme.css","bg.js.gz"};
+  const size_t reqiredFilesSize = sizeof(reqiredFiles) / sizeof(reqiredFiles[0]);
+  char fullpath[64];
   if(SPIFFS.exists("/www/settings.html")) SPIFFS.remove("/www/settings.html");
   if(SPIFFS.exists("/www/update.html")) SPIFFS.remove("/www/update.html");
   if(SPIFFS.exists("/www/index.html")) SPIFFS.remove("/www/index.html");
   if(SPIFFS.exists("/www/ir.html")) SPIFFS.remove("/www/ir.html");
   if(SPIFFS.exists("/www/elogo.png")) SPIFFS.remove("/www/elogo.png");
   if(SPIFFS.exists("/www/elogo84.png")) SPIFFS.remove("/www/elogo84.png");
-  for (uint8_t i=0; i<reqiredFilesSize; i++){
-    sprintf(fullpath, "/www/%s", reqiredFiles[i]);
-    if(!SPIFFS.exists(fullpath)) {
-      Serial.println(fullpath);
-      return true;
+  // Debug: list files in /www to help diagnose missing files
+  Serial.println("Listing /www contents:");
+  File root = SPIFFS.open("/www");
+  if (root) {
+    File file = root.openNextFile();
+    while (file) {
+      Serial.println(file.name());
+      file = root.openNextFile();
     }
+  } else {
+    Serial.println("/www directory not found in SPIFFS");
+  }
+  for (size_t i=0; i<reqiredFilesSize; i++){
+    snprintf(fullpath, sizeof(fullpath), "/www/%s", reqiredFiles[i]);
+    // Accept either compressed (.gz) or plain file. Some builds ship .gz files.
+    if (SPIFFS.exists(fullpath)) continue;
+
+    // Try alternate name: if requested name ends with .gz, try without it; otherwise try with .gz
+    char altpath[64];
+    size_t flen = strlen(fullpath);
+    if (flen > 3 && strcmp(fullpath + flen - 3, ".gz") == 0) {
+      // remove .gz
+      strncpy(altpath, fullpath, flen - 3);
+      altpath[flen - 3] = '\0';
+    } else {
+      // add .gz
+      snprintf(altpath, sizeof(altpath), "%s.gz", fullpath);
+    }
+
+    if (SPIFFS.exists(altpath)) continue;
+
+    // neither original nor alternate exists -> report missing
+    Serial.println(fullpath);
+    return true;
   }
   return false;
 }
@@ -669,10 +697,10 @@ void Config::setDefaults() {
   store.forcemono = false;
   store.i2sinternal = false;
   store.rotate90 = false;
-  store.screensaverEnabled = false;
+  store.screensaverEnabled = true;
   store.screensaverTimeout = 20;
   store.screensaverBlank = false;
-  store.lcdAnimationType = 0;  // Default to FISH animation
+  store.lcdAnimationType = AnimationType::ANIM_SOUND_METER;  // Default to SOUND_METER animation
   snprintf(store.mdnsname, MDNS_LENGTH, "yoradio-%x", (unsigned int)getChipId());
   store.skipPlaylistUpDown = false;
   store.screensaverPlayingEnabled = false;
@@ -1091,7 +1119,7 @@ void Config::sleepForAfter(uint16_t sf, uint16_t sa){
 void Config::bootInfo() {
   BOOTLOG("");
   BOOTLOG("************************************************");
-  BOOTLOG("*               ёPadio v%s                *", YOVERSION);
+  BOOTLOG("*             ёPadio v%s      By PCX        *", YOVERSION);
   BOOTLOG("************************************************");
   BOOTLOG("------------------------------------------------");
   BOOTLOG("arduino:\t%d", ARDUINO);

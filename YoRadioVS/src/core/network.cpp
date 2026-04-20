@@ -181,6 +181,7 @@ void rebootTime() {
 void MyNetwork::raiseSoftAP() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(apSsid, apPassword);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
   Serial.println("##[BOOT]#");
   BOOTLOG("************************************************");
   BOOTLOG("Running in AP mode");
