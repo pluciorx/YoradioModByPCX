@@ -8,6 +8,7 @@
 #include "netserver.h"
 #include "../pluginsManager/pluginsManager.h"
 #include "../userdefine.h"
+#include "../enc2menu.h"
 
 long encOldPosition = 0;
 long enc2OldPosition = 0;
@@ -164,54 +165,48 @@ void loopControls() {
 	if (network.status == CONNECTED || network.status == SDREADY) touchscreen.loop();
 #endif
 }
-#if ENC_BTNL!=255 || ENC2_BTNL!=255
-void encodersLoop(yoEncoder* enc, bool first) {
-	if (network.status != CONNECTED && network.status != SDREADY) return;
-	if (display.mode() == LOST) return;
-	int8_t encoderDelta = enc->encoderChanged();
-	if (encoderDelta != 0)
-	{
-		uint8_t encBtnState = digitalRead(first ? ENC_BTNB : ENC2_BTNB);
-#   if defined(DUMMYDISPLAY) && !defined(USE_NEXTION)
-		first = first ? (first && encBtnState) : (!encBtnState);
-		if (first) {
-			int nv = config.store.volume + encoderDelta;
-			if (nv < 0) nv = 0;
-			if (nv > 254) nv = 254;
-			player.setVol((uint8_t)nv);
-		}
-		else {
-			if (encoderDelta > 0) player.next(); else player.prev();
-		}
-#   else
-		if (first) {
-			controlsEvent(encoderDelta > 0, encoderDelta);
-		}
-		else {
-			if (encBtnState == HIGH && display.mode() == PLAYER) {
-				if (config.store.skipPlaylistUpDown) {
-					if (encoderDelta > 0) player.next(); else player.prev();
-					return;
-				}
-				display.putRequest(NEWMODE, STATIONS);
-				while (display.mode() != STATIONS) { delay(10); }
-			}
-			controlsEvent(encoderDelta > 0, encoderDelta);
-		}
-#   endif
-	}
-}
-#endif
-
 #if ENC_BTNL!=255
 void encoder1Loop() {
-	encodersLoop(&encoder, true);
+	if (network.status != CONNECTED && network.status != SDREADY) return;
+	if (display.mode() == LOST) return;
+	int8_t encoderDelta = encoder.encoderChanged();
+	if (encoderDelta == 0) return;
+#if defined(DUMMYDISPLAY) && !defined(USE_NEXTION)
+	uint8_t encBtnState = digitalRead(ENC_BTNB);
+	if (encBtnState) {
+		int nv = config.store.volume + encoderDelta;
+		if (nv < 0) nv = 0;
+		if (nv > 254) nv = 254;
+		player.setVol((uint8_t)nv);
+	}
+	else {
+		if (encoderDelta > 0) player.next(); else player.prev();
+	}
+#else
+	controlsEvent(encoderDelta > 0, encoderDelta);
+#endif
 }
 #endif
 
 #if ENC2_BTNL!=255
 void encoder2Loop() {
-	encodersLoop(&encoder2, false);
+	if (network.status != CONNECTED && network.status != SDREADY) return;
+	if (display.mode() == LOST) return;
+	int8_t encoderDelta = encoder2.encoderChanged();
+	if (encoderDelta == 0) return;
+#if defined(DUMMYDISPLAY) && !defined(USE_NEXTION)
+	if (encoderDelta > 0) player.next(); else player.prev();
+#else
+	if (display.mode() == ENC2MENU) {
+		enc2menu_rotate(encoderDelta > 0 ? 1 : -1);
+		return;
+	}
+	if (encoderDelta > 0) {
+		opto_input_selector_step(true);
+	}
+	// Left turns: delta is consumed by encoderChanged() above but no action taken,
+	// so the position stays in sync and no phantom right steps accumulate.
+#endif
 }
 #endif
 
@@ -349,29 +344,7 @@ void irLoop() {
 						break;
 					}
 					case IR_AST: {
-						uint8_t inputState = opto_input_selector_cycle();
-						// Top line (station/meta): keep blank in RADIO, show EXTERNAL in BT/AUX
-						if (inputState == 0) {
-							config.setScreensaverBlank(true);
-							config.loadStation(config.lastStation());
-							
-							player.sendCommand({ PR_PLAY, config.lastStation() });
-							
-						}
-						else if (inputState == 1) {
-							config.setScreensaverBlank(false);
-							player.sendCommand({ PR_STOP, 0 });
-							
-							config.setStation("INPUT: BLUETOOTH");							
-							config.setTitle("");
-
-						}
-						else {						
-							config.setStation("INPUT: AUX");
-							config.setTitle("");
-
-						}
-						display.putRequest(NEWSTATION);
+						opto_input_selector_step(true);
 						break;
 					}
 					} /* switch (target) */
@@ -405,7 +378,11 @@ void onBtnLongPressStart(int id) {
 #       if defined(DUMMYDISPLAY) && !defined(USE_NEXTION)
 		break;
 #       endif
-		display.putRequest(NEWMODE, display.mode() == PLAYER ? VOL : PLAYER);
+		if (display.mode() == ENC2MENU) {
+			enc2menu_exit();
+		} else {
+			enc2menu_enter();
+		}
 		break;
 	}
 	case EVT_BTNMODE: {
@@ -483,8 +460,6 @@ void controlsEvent(bool toRight, int8_t volDelta) {
 #if !defined(DUMMYDISPLAY) || defined(USE_NEXTION)
 #if !defined(DSP_LCD)
 		display.putRequest(NEWMODE, VOL);
-#else
-		display.putRequest(DRAWVOL);
 #endif
 #endif
 		if (volDelta != 0) {
@@ -520,7 +495,11 @@ void onBtnClick(int id) {
 	}
 	case EVT_BTNCENTER:
 	case EVT_ENCBTNB:
-	case EVT_ENC2BTNB: {
+	{
+		if (display.mode() == ENC2MENU) {
+			enc2menu_select();
+			break;
+		}
 		if (display.mode() == NUMBERS) {
 			display.numOfNextStation = 0;
 			display.putRequest(NEWMODE, PLAYER);
@@ -546,6 +525,12 @@ void onBtnClick(int id) {
 #ifdef USE_SD
 			config.changeMode();
 #endif
+		}
+		break;
+	}
+	case EVT_ENC2BTNB: {
+		if (display.mode() == ENC2MENU) {
+			enc2menu_select();
 		}
 		break;
 	}
@@ -607,9 +592,12 @@ void onBtnDoubleClick(int id) {
 	}
 	case EVT_BTNCENTER:
 	case EVT_ENCBTNB:
-	case EVT_ENC2BTNB: {
+	{
 		//display.putRequest(NEWMODE, display.mode() == PLAYER ? VOL : PLAYER);
 		onBtnClick(EVT_BTNMODE);
+		break;
+	}
+	case EVT_ENC2BTNB: {
 		break;
 	}
 	case EVT_BTNRIGHT: {

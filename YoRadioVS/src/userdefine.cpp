@@ -3,20 +3,49 @@
 #include "core/options.h"     // <-- ensure BUFLEN and other macros are defined
 #include "core/config.h"
 #include "core/player.h"
+#include "core/display.h"
 #include "MPR121Touch/src/MPR121Touch.h"
 #include "userdefine.h"
 
 namespace {
-  constexpr uint8_t OPTO_INPUT_SELECTOR_PIN = 1;
-  constexpr uint8_t OPTO_AUX1_PIN = 2;
-  constexpr uint8_t OPTO_AUX2_PIN = 40;
-  constexpr uint8_t OPTO_AUX3_PIN = 39;
+  constexpr uint8_t OPTO_INPUT_SELECTOR_PIN = OPTO1_PIN;
+  constexpr uint8_t OPTO_AUX1_PIN = OPTO2_PIN;
+  constexpr uint8_t OPTO_AUX2_PIN = OPTO3_PIN;
+  constexpr uint8_t OPTO_AUX3_PIN = OPTO4_PIN;
+  uint8_t g_inputState = 0;
+  volatile bool g_inputPending = false; // set by encoder, consumed by display loop
 
+ 
+  ///
   inline void pulseOpto(uint8_t pin, uint16_t durationMs) {
     digitalWrite(pin, HIGH);
     delay(durationMs);
     digitalWrite(pin, LOW);
   }
+}
+
+// Called from the display task to flush pending input-state changes.
+// Returns true when a new runtime input state was applied.
+bool opto_input_selector_flush(uint8_t *appliedState) {
+  if (!g_inputPending) return false;
+  g_inputPending = false;
+  uint8_t inputState = g_inputState;
+  if (appliedState) *appliedState = inputState;
+
+  if (inputState == 0) {
+    config.loadStation(config.lastStation());
+    player.sendCommand({ PR_PLAY, config.lastStation() });
+  } else if (inputState == 1) {
+    player.sendCommand({ PR_STOP, 0 });
+    config.setStation("INPUT: BLUETOOTH");
+    config.setTitle("");
+  } else {
+    player.sendCommand({ PR_STOP, 0 });
+    config.setStation("INPUT: AUX");
+    config.setTitle("");
+  }
+
+  return true;
 }
 
 void optocouplers_setup() {
@@ -29,28 +58,52 @@ void optocouplers_setup() {
   digitalWrite(OPTO_AUX1_PIN, LOW);
   digitalWrite(OPTO_AUX2_PIN, LOW);
   digitalWrite(OPTO_AUX3_PIN, LOW);
+
+  g_inputState = 0;
+  g_inputPending = false;
 }
 
 void opto_input_selector_pulse() {
-  pulseOpto(OPTO_INPUT_SELECTOR_PIN, 30);
+  pulseOpto(OPTO_INPUT_SELECTOR_PIN, 20);
+}
+
+uint8_t opto_input_selector_current() {
+  return g_inputState;
+}
+
+uint8_t opto_input_selector_set(uint8_t targetState) {
+  targetState %= 3;
+  if (targetState != g_inputState) {
+    // Forward-only pulse model: RADIO->BT=1, BT->AUX=1, AUX->RADIO=2
+    // Walk forward one step at a time until target is reached.
+    while (g_inputState != targetState) {
+      uint8_t stepPulses = (g_inputState == 2) ? 2 : 1;
+      for (uint8_t i = 0; i < stepPulses; ++i) {
+        opto_input_selector_pulse();
+        if (i + 1 < stepPulses) delay(50); // longer gap between 2-pulse AUX->RADIO sequence
+      }
+      g_inputState = (uint8_t)((g_inputState + 1) % 3);
+      if (g_inputState != targetState) delay(50); // let bus settle before next step
+    }
+  }
+  // Always mark pending so the display task will catch the latest state
+  // even if multiple steps arrived before the previous update was rendered.
+  g_inputPending = true;
+  return g_inputState;
+}
+
+uint8_t opto_input_selector_step(bool toRight) {
+  if (!toRight) return g_inputState;
+  uint8_t targetState = (uint8_t)((g_inputState + 1) % 3);
+  return opto_input_selector_set(targetState);
 }
 
 uint8_t opto_input_selector_cycle() {
-  // 0=RADIO, 1=BT, 2=AUX
-  static uint8_t inputState = 0;
-  inputState = (inputState + 1) % 3;
+  return opto_input_selector_step(true);
+}
 
-  if (inputState == 0) {
-    // AUX -> RADIO requires two pulses
-    opto_input_selector_pulse();
-    delay(30);
-    opto_input_selector_pulse();
-    return inputState;
-  }
-
-  // RADIO->BT or BT->AUX requires one pulse
-  opto_input_selector_pulse();
-  return inputState;
+void toggleOpto(uint8_t pin, bool state) {
+    digitalWrite(pin, state ? HIGH : LOW);
 }
 
 void opto_aux1_pulse(uint16_t durationMs) {

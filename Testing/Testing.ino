@@ -12,6 +12,8 @@ void setup() {
     }
     Serial.println("LittleFS Mount success");
 
+    this line prevents build
+
     File root = LittleFS.open("/");
     if (!root) {
         Serial.println("Failed to open root directory");

@@ -3,25 +3,83 @@
 This repository contains a set of enhancements applied on top of the original yoRadio project. The original README is preserved below unchanged — this section is prepended so users see the fork-specific additions first.
 
 ### Highlights
-- Added support for LCD 40×2 (LCD2004/WH2002-style) character displays — driver helpers, wiring examples and display animations.
-- Updated I2S / audio libraries and VS/I2S initialization for improved ESP32 compatibility and audio stability.
-- Full 12-button capacitive touch support via integrated `MPR121` driver:
+
+#### 🖥️ Display
+- Added full native support for **LCD 40×2 character displays** (4002 I2C type) — driver, animations, real-time clock row and live VU meter screensaver.
+- Animated LCD UI: startup animation, transitions and character-based visualizations.
+
+#### 🎚️ VU Meter (character LCD)
+- Live dual-channel **character VU meter** screensaver for all character LCD variants (16×2, 20×4, 40×2).
+- Nonlinear scaling, adaptive auto-gain, per-channel peak markers and smooth ballistics — see the [VU Meter deep optimisation](#vu-meter--lcd-display--deep-optimisation) section below.
+
+#### 👆 Capacitive touch — MPR121
+- Full **12-electrode capacitive touch** panel support via integrated `MPR121` driver:
   - `TOUCH`, `RELEASE`, `SHORT_CLICK` and `LONG_PRESS` events
-  - Debounce and timing configuration exposed
-  - Default timings: debounce 20 ms, short-click 400 ms, long-press 800 ms
-  - Polling-based driver (IRQ pin not required) for simpler integration
-- Animated LCD UI: startup animation, transitions and character-based visualizations (including a character VU meter).
-- Web UI refresh and new www assets:
-  - New particle background and styling (`data/www/bg.js`)
-  - Additional settings pages exposing display, audio and touch configuration
-  - Playlist editor improvements (search, preview handling)
-- New on-device widgets & visual features:
-  - Character VU meter, on-screen clocks (digital/analog), and related settings
-- Examples and integrations:
-  - Updated/added examples demonstrating LCD wiring and animations, MPR121 electrode→action mapping, and updated web UI usage.
-- Misc:
-  - PSRAM-aware audio buffer sizing and improved buffer handling for VS1053/I2S paths.
-  - Backwards-compatibility notes and migration guidance included below.
+  - Short-click: play/pause, prev/next station, recall 9 favourites
+  - Long-press: mute toggle, save favourite to any of 9 slots (SPIFFS-persisted)
+  - Configurable debounce (40 ms), short-click (350 ms) and long-press (700 ms) timings
+  - Polling-based — IRQ wire not required; configurable I2C clock (100 kHz / 400 kHz)
+
+#### 🔀 Optocoupler input switcher
+- **3-input source selector** controlled via optocouplers (ESP32 GPIO → PCF opto driver):
+  - Cycles through **RADIO → BT → AUX** with single or double relay pulses as required by the target amplifier
+  - Additional AUX1/AUX2/AUX3 optocoupler outputs for arbitrary relay/control signals
+  - All outputs initialised LOW at startup; pulse duration configurable per channel
+  - Exposed as `opto_input_selector_cycle()` — returns current input index (0/1/2)
+
+#### 🔊 6J1 Valve / tube preamplifier integration
+- Hardware integration of a **6J1 dual-triode valve preamplifier stage** wired downstream of the DAC output:
+  - Optocoupler-isolated relay controls preamplifier power/mute — the ESP32 never directly switches valve supply rails
+  - Source switching and preamp enable/mute are coordinated from a single MCU so valve stage sequencing is always safe
+  - The glowing 6J1 tubes are visible through the chassis window 🔵
+
+#### 🔧 Custom PCB — isolated power architecture
+- **Custom PCB design** with fully separated power rails:
+  - **ESP32 + VS1053 / I2S DAC** — dedicated regulated 3.3 V / 5 V logic rail
+  - **DAC output stage** — separate analogue power rail to minimise digital noise coupling into the audio path
+  - **Input switcher optocoupler bank** — independently supplied and fully galvanically isolated from logic via optocouplers; relay coil drive on its own rail
+  - **6J1 valve preamp** — HT (plate voltage) and heater supply from a dedicated winding on the toroidal mains transformer
+  - Toroidal transformer chosen for low stray field and quiet operation
+  - Layout separates digital, analogue and high-voltage sections to protect the noise floor
+
+#### 📡 External Bluetooth receiver integration
+- An **external Bluetooth audio receiver module** is integrated as a third selectable input source:
+  - Connected to the AUX input of the source selector
+  - Switched in via the optocoupler input selector (`opto_input_selector_cycle()` — state 2 = BT)
+  - Allows wireless audio streaming from phone/tablet into the full valve preamp chain
+
+#### 🌐 Web UI
+- New particle animated background (`data/www/bg.js`)
+- Additional settings pages for display animations, VU sensitivity, clock format, touch thresholds and input source
+- Playlist editor improvements (search, preview)
+
+#### 🔊 Audio stability
+- Updated I2S and VS1053 library initialisation for improved ESP32 compatibility
+- PSRAM-aware audio buffer sizing for both VS1053 and I2S paths
+- Backwards-compatibility notes and migration guidance included below.
+
+### VU Meter & LCD Display — Deep Optimisation
+
+A significant low-level rewrite of the HD44780-over-I2C rendering pipeline focused on display responsiveness, audio safety and visual quality.
+
+#### ⚡ Performance & I2C throughput
+- **I2C bus speed raised to 400 kHz** (`Wire.setClock(400000)`) for all 40×2 LCD builds — the HD44780 PCF8574 backpack runs in Fast Mode, cutting per-character I2C time in half.
+- **Segment-diff writes** — the VU meter line is no longer rewritten in full every update cycle. Only characters that have actually changed are sent over I2C, reducing bus traffic by up to 80 % during steady-level passages.
+- **Clock row also diff-updated** — the top row (time display) uses the same segment-diffing strategy, eliminating the 1 Hz full-row burst that previously caused visible VU freezes every second.
+- **Bounded update cadence** — VU refresh is capped at ~10 ms intervals and the FreeRTOS display task delay (`DSP_TASK_DELAY`) is tuned so audio tasks are never preempted by display I2C blocking work.
+
+#### 🎚️ VU meter ballistics & visibility
+- **Piecewise (nonlinear) level mapping** replaces the old linear `0–255 → 0–N` map: the lower signal range is expanded for clear visibility of quiet passages; the upper range is compressed so transient peaks no longer permanently saturate the bars.
+- **Adaptive auto-scaling (AGC)** — the mapping ceiling tracks the recent programme peak and slowly decays when content is quieter, so bars always use the full available bar length regardless of station loudness.
+- **Faster attack, controlled release** — rise is capped at 3 steps/frame for smooth snap-up; fall rate is 1 step/frame in the lower zone and 2 steps/frame above 80 % full-scale to quickly pull bars away from maximum.
+- **Peak-hold markers** — each channel shows a brief `|` hold marker at its recent peak (60 ms hold, then single-step decay), giving a clear transient reference without the bar appearing "stuck".
+- **Clipping guard** — bars are prevented from reaching full scale unless the raw input is ≥ 252/255, correctly distinguishing "loud" from "clipping".
+
+#### 🔧 Stability
+- All new state fields (`_soundMeterAutoPeak`, `_soundMeterPeakL/R`, hold timestamps, line diff buffers) are initialised in the constructor and reset on every screensaver re-entry.
+- Clock diff state (`_soundMeterPrevClockLine`) is reset alongside VU state so stale data cannot cause ghost characters after display mode changes.
+
+---
 
 ### Migration / usage notes
 - Wiring: consult examples for LCD 40×2 wiring and MPR121 I2C address options (0x5A–0x5D). The touch driver uses polling; IRQ connection is optional.

@@ -35,6 +35,7 @@ class Display {
     bool ready() { return _bootStep==2; }
     void resetQueue();
     void putRequest(displayRequestType_e type, int payload=0);
+    void syncInputSelector(uint8_t inputState);
     void flip();
     void invert();
     bool deepsleep();
@@ -90,6 +91,7 @@ class Display {
     void init();
     void _start();
     void putRequest(displayRequestType_e type, int payload=0);
+    void syncInputSelector(uint8_t inputState) {}
     void loop(){}
     bool ready() { return true; }
     void resetQueue(){}

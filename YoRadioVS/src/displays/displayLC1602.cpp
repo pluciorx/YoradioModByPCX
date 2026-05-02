@@ -9,9 +9,48 @@
 #include "tools/commongfx.h"
 #include "conf/displayLCD1602conf.h"
 
-#if L10N_LANGUAGE == PL
-#include "tools/polishChars.h"
-#endif
+// CGRAM custom chars (slots 1-6; slot 0 is avoided — it is \0 in C strings)
+// Slot 1: speaker pointing right  (used at left edge of L-bar)
+// Slot 2: speaker pointing left   (used at right edge of R-bar)
+// Slots 3-6: smooth bar fill 1/5 .. 4/5 column  (0xFF = 5/5 full block)
+static const uint8_t cgram_speaker_r[8] = { // slot 1 ▷ speaker right
+  0b00001,
+  0b00011,
+  0b11101,
+  0b11001,
+  0b11101,
+  0b00011,
+  0b00001,
+  0b00000
+};
+static const uint8_t cgram_speaker_l[8] = { // slot 2 ◁ speaker left
+  0b10000,
+  0b11000,
+  0b10111,
+  0b10011,
+  0b10111,
+  0b11000,
+  0b10000,
+  0b00000
+};
+static const uint8_t cgram_bar1[8] = { // slot 3  █ 1/5
+  0b10000, 0b10000, 0b10000, 0b10000,
+  0b10000, 0b10000, 0b10000, 0b00000
+};
+static const uint8_t cgram_bar2[8] = { // slot 4  ██ 2/5
+  0b11000, 0b11000, 0b11000, 0b11000,
+  0b11000, 0b11000, 0b11000, 0b00000
+};
+static const uint8_t cgram_bar3[8] = { // slot 5  ███ 3/5
+  0b11100, 0b11100, 0b11100, 0b11100,
+  0b11100, 0b11100, 0b11100, 0b00000
+};
+static const uint8_t cgram_bar4[8] = { // slot 6  ████ 4/5
+  0b11110, 0b11110, 0b11110, 0b11110,
+  0b11110, 0b11110, 0b11110, 0b00000
+};
+// 5/5 full block uses the LCD's native 0xFF character (no CGRAM needed)
+
 
 #ifndef SCREEN_ADDRESS
   #define SCREEN_ADDRESS 0x27 ///< See datasheet for Address or scan it https://create.arduino.cc/projecthub/abdularbi17/how-to-scan-i2c-address-in-arduino-eaadda
@@ -123,19 +162,21 @@ void DspCore::initDisplay() {
   #endif
 #endif
 
-#if L10N_LANGUAGE == PL
-  // Load Polish custom characters into CGRAM
-  createChar(0, (uint8_t*)char_a_ogonek);  // ą
-  createChar(1, (uint8_t*)char_c_acute);   // ć
-  createChar(2, (uint8_t*)char_e_ogonek);  // ę
-  createChar(3, (uint8_t*)char_l_stroke);  // ł
-  createChar(4, (uint8_t*)char_n_acute);   // ń
-  createChar(5, (uint8_t*)char_o_acute);   // ó
-  createChar(6, (uint8_t*)char_s_acute);   // ś
-  createChar(7, (uint8_t*)char_z_dot);     // ż
-#endif
+// Load VU-meter custom characters into CGRAM slots 1-6.
+// Slot 0 is intentionally skipped (it maps to '\0' in C strings).
+// Slot 7 is left free for future use; native 0xFF = full-block bar.
+_loadCGRAM();
 
   clearClipping();
+}
+
+void DspCore::_loadCGRAM() {
+  createChar(1, (uint8_t*)cgram_speaker_r); // speaker → (L-bar left edge)
+  createChar(2, (uint8_t*)cgram_speaker_l); // speaker ← (R-bar right edge)
+  createChar(3, (uint8_t*)cgram_bar1);      // 1/5 partial column
+  createChar(4, (uint8_t*)cgram_bar2);      // 2/5 partial column
+  createChar(5, (uint8_t*)cgram_bar3);      // 3/5 partial column
+  createChar(6, (uint8_t*)cgram_bar4);      // 4/5 partial column
 }
 
 void DspCore::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color){
@@ -165,7 +206,17 @@ uint16_t DspCore::height(){
 #endif
 }
 
-void DspCore::clearDsp(bool black){ clear(); }
+void DspCore::clearDsp(bool black){
+  clear();
+  // Reload CGRAM: I2C noise from GPIO switching (especially the 2-pulse
+  // AUX->RADIO transition) can corrupt custom-character slots 1-6.
+  _loadCGRAM();
+  // Reset sound-meter diff state so stale VU icon bytes (\x01-\x06)
+  // cannot bleed into the next widget render pass.
+  _soundMeterPrevLine[0] = '\0';
+  _soundMeterPrevClockLine[0] = '\0';
+  _soundMeterMode = false;
+}
 void DspCore::flip(){ }
 void DspCore::invert(){ }
 void DspCore::sleep(void) { 
@@ -379,165 +430,178 @@ void DspCore::showSoundMeterClock(const WidgetConfig& config) {
 }
 
 void DspCore::updateSoundMeter() {
-    // Update sound meter on line 2 (line 1 has the clock)
-    // Get display width
+    // Line layout (40-col example, scales proportionally):
+    //   L side: [spkR][===bar19chars===][         ]
+    //   R side: [         ][===bar19chars===][spkL]
+    // Both halves overlap in the same line[] array (they meet in the middle).
+    // barWidth = halfWidth - 1  (one cell is the speaker icon)
+    // Sub-character smooth fill: 5 horizontal pixel columns per char cell.
+    //   CGRAM slot 1=spkR, 2=spkL, 3=1/5, 4=2/5, 5=3/5, 6=4/5, 0xFF=full
+
     static uint8_t lastSecond = 0xFF;
+
     #if defined(LCD_4002)
       const uint8_t displayWidth = 40;
-      const uint8_t halfWidth = 20;
+      const uint8_t halfWidth    = 20;
     #elif defined(LCD_2004) || defined(LCD_2002)
       const uint8_t displayWidth = 20;
-      const uint8_t halfWidth = 10;
+      const uint8_t halfWidth    = 10;
     #else
       const uint8_t displayWidth = 16;
-      const uint8_t halfWidth = 8;
+      const uint8_t halfWidth    = 8;
     #endif
-    
-    // Update cadence tuned for HD44780 over I2C (prioritize smoothness)
+    const uint8_t barWidth = halfWidth - 1; // chars available for actual bar
+    const uint16_t maxPx   = (uint16_t)barWidth * 5; // sub-pixel resolution
+
     const uint32_t now = millis();
-    const uint16_t updateIntervalMs = (uint16_t)(1000 / 15); // slightly under 24 FPS.
+    const uint16_t updateIntervalMs = (uint16_t)(1000 / 15);
     if (_soundMeterLastUpdate != 0 && (now - _soundMeterLastUpdate) < updateIntervalMs) {
         return;
     }
     _soundMeterLastUpdate = now;
 
-    // Get audio levels
+    // --- Audio levels ---
     uint16_t vulevel = player.getVUlevel();
     uint8_t rawL = (vulevel >> 8) & 0xFF;
     uint8_t rawR = vulevel & 0xFF;
 
-    // Dynamic auto-scaling — envelope values are instantaneous so they swing widely.
+    // Dynamic auto-scaling
     uint8_t framePeak = max(rawL, rawR);
     if (framePeak > _soundMeterAutoPeak) {
         _soundMeterAutoPeak = framePeak;
     } else {
-        // Slow decay keeps the scale stable across a song section.
         const uint8_t autoPeakMin = 60;
-        if (_soundMeterAutoPeak > autoPeakMin) {
-            _soundMeterAutoPeak--;
-        }
+        if (_soundMeterAutoPeak > autoPeakMin) _soundMeterAutoPeak--;
     }
+    uint8_t scaleTop = max<uint8_t>(_soundMeterAutoPeak, (uint8_t)80);
 
-    uint8_t scaleTop = max<uint8_t>(_soundMeterAutoPeak, static_cast<uint8_t>(80));
-
-    // Simple linear map — the envelope values already swing naturally.
-    auto mapLevel = [&](uint8_t raw) -> uint8_t {
+    // Map raw value to sub-pixel range 0..maxPx
+    auto mapLevel = [&](uint8_t raw) -> uint16_t {
         const uint8_t noiseFloor = 4;
         if (raw <= noiseFloor) return 0;
-
         uint8_t top = (scaleTop > noiseFloor) ? (scaleTop - noiseFloor) : 1;
-        uint16_t scaled = map(raw - noiseFloor, 0, top, 0, halfWidth);
-
-        if (scaled > halfWidth) scaled = halfWidth;
-        return static_cast<uint8_t>(scaled);
+        uint32_t scaled = (uint32_t)(raw - noiseFloor) * maxPx / top;
+        if (scaled > maxPx) scaled = maxPx;
+        return (uint16_t)scaled;
     };
 
-    uint8_t L = mapLevel(rawL);
-    uint8_t R = mapLevel(rawR);
-    
+    uint16_t targetLpx = mapLevel(rawL);
+    uint16_t targetRpx = mapLevel(rawR);
+
     bool played = player.isRunning();
-    
-    if(played) {
-        // Fast attack, moderate decay — lets beats punch through
-        if (L >= _soundMeterMeasL) _soundMeterMeasL = L;  // instant attack
-        else _soundMeterMeasL = (_soundMeterMeasL > 1 ? _soundMeterMeasL - 1 : 0);
 
-        if (R >= _soundMeterMeasR) _soundMeterMeasR = R;  // instant attack
-        else _soundMeterMeasR = (_soundMeterMeasR > 1 ? _soundMeterMeasR - 1 : 0);
+    // Bar follows the instantaneous level directly — no hold-on-attack.
+    // A gentle sub-pixel decay gives a brief tail so short spikes don't vanish instantly.
+    // This keeps the bar "alive" and moving even during loud sustained passages.
+    const uint16_t decayRate = 8; // sub-pixels per frame (~8/15 s to floor at full decay)
+    if (played) {
+        _soundMeterMeasL = targetLpx > _soundMeterMeasL
+            ? targetLpx
+            : (_soundMeterMeasL > decayRate ? _soundMeterMeasL - decayRate : 0);
+        _soundMeterMeasR = targetRpx > _soundMeterMeasR
+            ? targetRpx
+            : (_soundMeterMeasR > decayRate ? _soundMeterMeasR - decayRate : 0);
     } else {
-        const uint8_t fadeRate = 2;
-        if(_soundMeterMeasL > 0) _soundMeterMeasL = (_soundMeterMeasL > fadeRate) ? _soundMeterMeasL - fadeRate : 0;
-        if(_soundMeterMeasR > 0) _soundMeterMeasR = (_soundMeterMeasR > fadeRate) ? _soundMeterMeasR - fadeRate : 0;
+        // Fast drop when stopped
+        const uint16_t stopFade = 15;
+        _soundMeterMeasL = (_soundMeterMeasL > stopFade) ? _soundMeterMeasL - stopFade : 0;
+        _soundMeterMeasR = (_soundMeterMeasR > stopFade) ? _soundMeterMeasR - stopFade : 0;
     }
-    
-    if(_soundMeterMeasL > halfWidth) _soundMeterMeasL = halfWidth;
-    if(_soundMeterMeasR > halfWidth) _soundMeterMeasR = halfWidth;
 
-    // Peak hold marker with short hold then decay
-    const uint16_t peakHoldMs = 25;
-    if (_soundMeterMeasL >= _soundMeterPeakL) {
-        _soundMeterPeakL = _soundMeterMeasL;
+    if (_soundMeterMeasL > maxPx) _soundMeterMeasL = maxPx;
+    if (_soundMeterMeasR > maxPx) _soundMeterMeasR = maxPx;
+
+    // Peak dot tracks the bar in char units; holds 1.5 s then slides down.
+    uint8_t charL = (uint8_t)(_soundMeterMeasL / 5);
+    uint8_t charR = (uint8_t)(_soundMeterMeasR / 5);
+
+    const uint16_t peakHoldMs = 500;
+    if (charL >= _soundMeterPeakL) {
+        _soundMeterPeakL = charL;
         _soundMeterPeakHoldUntilL = now + peakHoldMs;
     } else if (now > _soundMeterPeakHoldUntilL && _soundMeterPeakL > 0) {
         _soundMeterPeakL--;
     }
-
-    if (_soundMeterMeasR >= _soundMeterPeakR) {
-        _soundMeterPeakR = _soundMeterMeasR;
+    if (charR >= _soundMeterPeakR) {
+        _soundMeterPeakR = charR;
         _soundMeterPeakHoldUntilR = now + peakHoldMs;
     } else if (now > _soundMeterPeakHoldUntilR && _soundMeterPeakR > 0) {
         _soundMeterPeakR--;
     }
-    
-    // Build sound meter line based on display width
-    // Left channel: from left edge (0) towards center
-    // Right channel: from right edge towards center
-    #if defined(LCD_4002)
-      char line[41]; // 40 chars + null
-    #elif defined(LCD_2004) || defined(LCD_2002)
-      char line[21]; // 20 chars + null
-    #else
-      char line[17]; // 16 chars + null
-    #endif
-    
+
+    // --- Build line[] ---
+    // Encoding: 0x01=spkR 0x02=spkL 0x03-0x06=bar1-4 0xFF=barFull ' '=empty '|'=peak
+    char line[41];
     memset(line, ' ', displayWidth);
-    
-    // Fill left channel (from left)
-    for(uint8_t i = 0; i < _soundMeterMeasL; i++) {
-        line[i] = (char)0xFF; // Solid block character
-    }
-    
-    // Fill right channel (from right)
-    for(uint8_t i = 0; i < _soundMeterMeasR; i++) {
-        line[displayWidth - 1 - i] = (char)0xFF; // Solid block character
+    line[displayWidth] = '\0';
+
+    // Left speaker icon at position 0
+    line[0] = (char)0x01;
+    // Right speaker icon at last position
+    line[displayWidth - 1] = (char)0x02;
+
+    // L bar fills positions 1..barWidth (left to right)
+    uint16_t Lpx = _soundMeterMeasL;
+    for (uint8_t i = 0; i < barWidth; i++) {
+        uint16_t cellPx = (uint16_t)(i + 1) * 5; // pixels consumed when cell i is full
+        uint8_t pos = 1 + i;
+        if (Lpx >= cellPx) {
+            line[pos] = (char)0xFF;       // full block
+        } else if (Lpx > cellPx - 5) {
+            uint8_t frac = (uint8_t)(Lpx - (cellPx - 5)); // 1..4
+            line[pos] = (char)(0x02 + frac); // slots 3..6
+        }
+        // else stays ' '
     }
 
-    // Draw peak markers when outside the filled body
-    if (_soundMeterPeakL > 0 && _soundMeterPeakL <= halfWidth) {
-        uint8_t peakPosL = _soundMeterPeakL - 1;
-        if (line[peakPosL] == ' ') {
-            line[peakPosL] = '|';
+    // R bar fills positions (displayWidth-2)..(displayWidth-1-barWidth) (right to left)
+    uint16_t Rpx = _soundMeterMeasR;
+    for (uint8_t i = 0; i < barWidth; i++) {
+        uint16_t cellPx = (uint16_t)(i + 1) * 5;
+        uint8_t pos = displayWidth - 2 - i;
+        if (line[pos] != ' ') break; // don't overwrite L bar if channels overlap
+        if (Rpx >= cellPx) {
+            line[pos] = (char)0xFF;
+        } else if (Rpx > cellPx - 5) {
+            uint8_t frac = (uint8_t)(Rpx - (cellPx - 5));
+            line[pos] = (char)(0x02 + frac);
         }
     }
-    if (_soundMeterPeakR > 0 && _soundMeterPeakR <= halfWidth) {
-        uint8_t peakPosR = displayWidth - _soundMeterPeakR;
-        if (line[peakPosR] == ' ') {
-            line[peakPosR] = '|';
-        }
+
+    // Peak markers — only draw outside the filled body
+    if (_soundMeterPeakL > 0 && _soundMeterPeakL <= barWidth) {
+        uint8_t pp = _soundMeterPeakL; // 1-based from left (after speaker)
+        if (line[pp] == ' ') line[pp] = '|';
     }
-    
-    line[displayWidth] = '\0';
-    
-    // Display only changed segments on line 2 to reduce I2C traffic
+    if (_soundMeterPeakR > 0 && _soundMeterPeakR <= barWidth) {
+        uint8_t pp = displayWidth - 1 - _soundMeterPeakR; // mirror
+        if (line[pp] == ' ') line[pp] = '|';
+    }
+
+    // --- Diff-update line 2 ---
     if (_soundMeterPrevLine[0] == '\0') {
         setCursor(0, 1);
         print(line);
-        strcpy(_soundMeterPrevLine, line);
-    } else if (strcmp(_soundMeterPrevLine, line) != 0) {
+        memcpy(_soundMeterPrevLine, line, displayWidth + 1);
+    } else if (memcmp(_soundMeterPrevLine, line, displayWidth) != 0) {
         uint8_t start = 0;
         while (start < displayWidth) {
-            while (start < displayWidth && _soundMeterPrevLine[start] == line[start]) {
-                start++;
-            }
+            while (start < displayWidth && _soundMeterPrevLine[start] == line[start]) start++;
             if (start >= displayWidth) break;
-
             uint8_t end = start;
-            while (end < displayWidth && _soundMeterPrevLine[end] != line[end]) {
-                end++;
-            }
-
-            char segment[41];
+            while (end < displayWidth && _soundMeterPrevLine[end] != line[end]) end++;
+            char seg[41];
             uint8_t len = end - start;
-            memcpy(segment, line + start, len);
-            segment[len] = '\0';
+            memcpy(seg, line + start, len);
+            seg[len] = '\0';
             setCursor(start, 1);
-            print(segment);
+            print(seg);
             start = end;
         }
-        strcpy(_soundMeterPrevLine, line);
+        memcpy(_soundMeterPrevLine, line, displayWidth + 1);
     }
-    
-    // Also update clock periodically
+
+    // Update clock on line 0 every second
     if (network.timeinfo.tm_sec != lastSecond) {
         lastSecond = network.timeinfo.tm_sec;
         showSoundMeterClock(clockConf);

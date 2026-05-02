@@ -66,11 +66,11 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 /******************************************/
 
 /*  ENCODER  */
-#define ENC_BTNL              5           /*  Left rotation */
+#define ENC_BTNL              6           /*  Left rotation */
 #define ENC_BTNB              13           /*  Encoder button */
-#define ENC_BTNR              6           /*  Right rotation */
+#define ENC_BTNR              5           /*  Right rotation */
 //#define ENC_INTERNALPULLUP    false          /*  Enable the weak pull up resistors */
-#define ENC_HALFQUARD         true          /*  Experiment  with it */
+#define ENC_HALFQUARD         false          /*  Experiment  with it */
 /******************************************/
 
 /*  SDCARD  */
@@ -90,11 +90,11 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 //#define RTC_SCL               255						 /*	RTC_SCL	*/
 
 /*  ENCODER2  */
-//#define ENC2_BTNL              255           /*  Left rotation */
-//#define ENC2_BTNB              255           /*  Encoder button */
-//#define ENC2_BTNR              255           /*  Right rotation */
+#define ENC2_BTNL              4           /*  Left rotation */
+#define ENC2_BTNB              14           /*  Encoder button */
+#define ENC2_BTNR              3           /*  Right rotation */
 //#define ENC2_INTERNALPULLUP    true          /*  Enable the weak pull up resistors */
-//#define ENC2_HALFQUARD         false         /*  (true, false, 255) Experiment  with it */
+#define ENC2_HALFQUARD         false         /*  (true, false, 255) Experiment  with it */
 /******************************************/
 
 /*  BUTTONS  */

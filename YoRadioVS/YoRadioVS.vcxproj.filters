@@ -563,6 +563,9 @@
     <ClCompile Include="src\userdefine.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\enc2menu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="__vm\.YoRadioVS.vsarduino.h">
@@ -1292,6 +1295,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\userdefine.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\enc2menu.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

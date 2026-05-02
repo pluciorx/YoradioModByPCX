@@ -365,7 +365,7 @@ void Config::configPostPlaying(uint16_t stationId){
   if(store.smartstart!=2) setSmartStart(1);
 
   // Clear any "[connecting]" text once playback has started
-  setTitle("");
+  //setTitle("");
 
   netserver.requestOnChange(MODE, 0);
   //display.putRequest(NEWMODE, PLAYER);
@@ -843,7 +843,7 @@ void Config::setTitle(const char* title) {
 void Config::setStation(const char* station) {
   memset(config.station.name, 0, BUFLEN);
   strlcpy(config.station.name, station, BUFLEN);
-  u8fix(config.station.title);
+  u8fix(config.station.name);
 }
 
 void Config::indexPlaylist() {

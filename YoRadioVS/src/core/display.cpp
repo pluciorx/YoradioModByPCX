@@ -16,6 +16,8 @@
 #ifdef DSP_LCD
 #include "../displays/animations.h"
 #endif
+#include "../enc2menu.h"
+#include "../userdefine.h"
 
 Display display;
 #ifdef USE_NEXTION
@@ -40,7 +42,8 @@ Nextion nextion;
 
 #ifndef DSQ_SEND_DELAY
   //#define DSQ_SEND_DELAY portMAX_DELAY
-  #define DSQ_SEND_DELAY  pdMS_TO_TICKS(200)
+  //#define DSQ_SEND_DELAY  pdMS_TO_TICKS(200)
+  #define DSQ_SEND_DELAY  0   // non-blocking: drop stale UI requests rather than stalling encoder loop
 #endif
 
 static uint32_t _favoriteMarkerHideAt = 0;
@@ -113,7 +116,7 @@ void Display::init() {
   _bootStep = 0;
   dsp.initDisplay();
   displayQueue=NULL;
-  displayQueue = xQueueCreate( 5, sizeof( requestParams_t ) );
+  displayQueue = xQueueCreate( 10, sizeof( requestParams_t ) );
   while(displayQueue==NULL){;}
   _createDspTask();
   while(!_bootStep==0) { delay(10); }
@@ -348,7 +351,7 @@ void Display::_swichMode(displayMode_e newmode) {
     else
       _clock->moveBack();
     #ifdef DSP_LCD
-      dsp.clearDsp();
+      // Do not full-clear LCD here: station/title rows are refreshed explicitly.
     #endif
     numOfNextStation = 0;
     #ifdef META_MOVE
@@ -401,6 +404,10 @@ void Display::_swichMode(displayMode_e newmode) {
   if (newmode == SDCHANGE)  _showDialog(LANG::const_waitForSD);
   if (newmode == INFO || newmode == SETTINGS || newmode == TIMEZONE || newmode == WIFI) _showDialog(LANG::const_DlgNextion);
   if (newmode == NUMBERS) _showDialog("");
+  if (newmode == ENC2MENU) {
+    _showDialog(enc2menu_label);
+    _nums->setText(enc2menu_value);
+  }
   if (newmode == STATIONS) {
     _pager->setPage( pages[PG_PLAYLIST]);
     _plcurrent->setText("");
@@ -437,7 +444,40 @@ void Display::putRequest(displayRequestType_e type, int payload){
   #endif
 }
 
+void Display::syncInputSelector(uint8_t inputState) {
+  if (_mode == ENC2MENU) return;
+
+  if (_mode != PLAYER) {
+    _swichMode(PLAYER);
+  }
+
+  #ifdef DSP_LCD
+    // Avoid full clear on input switch; row-level clears in _station/_title are enough.
+  #endif
+
+  numOfNextStation = 0;
+  _station();
+  _title();
+
+  if (inputState == 0) {
+    _layoutChange(player.isRunning());
+  } else {
+    _layoutChange(false);
+  }
+
+  #ifdef DSP_LCD
+    // Ensure clock is repainted after selector-driven redraw.
+    _time(true);
+  #endif
+}
+
 void Display::_layoutChange(bool played){
+#ifdef DSP_LCD
+  (void)played;
+  // On 2-row LCDs, row 0 is shared by station name / clock / volume text.
+  // Do not move or redraw the clock as part of player start/stop layout changes.
+  return;
+#endif
   if(config.store.vumeter && _vuwidget){
     if(played){
       if(_vuwidget) _vuwidget->unlock();
@@ -469,8 +509,17 @@ void Display::loop() {
   }
   if(displayQueue==NULL || _locked) return;
 
+  // Flush any pending input-selector state change (encoder-2 rotation).
+  // Called here so the display/player update always happens on the display task,
+  // decoupled from the encoder ISR path, ensuring fast rotation never loses updates.
+  uint8_t appliedInputState = 0;
+  if (opto_input_selector_flush(&appliedInputState)) {
+    syncInputSelector(appliedInputState);
+  }
+
   // Hide small volume indicator after timeout without switching full screen mode.
   if (_volHideAt > 0 && millis() >= _volHideAt) {
+
     _volHideAt = 0;
     #ifndef HIDE_VOL
       if (_voltxt) _voltxt->setText("");
@@ -589,6 +638,16 @@ void Display::loop() {
             _meta->setAlign(metaConf.widget.align);
             _meta->setText(marked);
             _favoriteMarkerHideAt = millis() + 1000;
+          }
+          break;
+        }
+        case MENU_UPDATE: {
+          if (_mode == ENC2MENU) {
+            // Only update the text widgets, do NOT call _showDialog() here.
+            // _showDialog() calls _pager->setPage() which forces a full LCD redraw
+            // on every rotation, causing visible blinks and sluggish response.
+            _meta->setText(enc2menu_label);
+            _nums->setText(enc2menu_value);
           }
           break;
         }
