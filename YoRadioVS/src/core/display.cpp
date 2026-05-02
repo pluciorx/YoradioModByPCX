@@ -329,12 +329,14 @@ void Display::_start() {
 
 void Display::_showDialog(const char *title){
   dsp.setScrollId(NULL);
-  _pager->setPage( pages[PG_DIALOG]);
+  // Prevent stale station text from being drawn during page activation.
+  _meta->setActive(false);
   #ifdef META_MOVE
     _meta->moveTo(metaMove);
   #endif
   _meta->setAlign(WA_CENTER);
   _meta->setText(title);
+  _pager->setPage( pages[PG_DIALOG]);
 }
 
 void Display::_swichMode(displayMode_e newmode) {
@@ -519,10 +521,17 @@ void Display::loop() {
 
   // Hide small volume indicator after timeout without switching full screen mode.
   if (_volHideAt > 0 && millis() >= _volHideAt) {
-
     _volHideAt = 0;
     #ifndef HIDE_VOL
       if (_voltxt) _voltxt->setText("");
+    #endif
+    #ifdef DSP_LCD
+      // Restore station name on row 0 after vol display timeout.
+      if (_meta) {
+        _meta->moveBack();
+        _meta->setAlign(metaConf.widget.align);
+        _meta->setText(config.station.name);
+      }
     #endif
   }
   // Hide temporary favorite marker ("*") after 1 second and restore station text.
@@ -691,6 +700,13 @@ void Display::_setRSSI(int rssi) {
 }
 
 void Display::_station() {
+  #ifdef DSP_LCD
+    // Cancel any active vol display takeover before showing station name.
+    if (_volHideAt > 0) {
+      _volHideAt = 0;
+      _meta->moveBack();
+    }
+  #endif
   _meta->setAlign(metaConf.widget.align);
   _meta->setText(config.station.name);
 /*#ifdef USE_NEXTION
@@ -762,8 +778,28 @@ void Display::_volume() {
     vol = (vol * 100) / 254;
 #endif
     if (_volbar) _volbar->setValue(config.store.volume);
-#ifndef HIDE_VOL
+#if defined(HIDE_VOL) || defined(DSP_LCD)
+    // On LCD, vol text is shown via _meta takeover below; skip dedicated voltxt.
+    (void)_voltxt;
+#else
     if (_voltxt) _voltxt->setText(vol, voltxtFmt);
+#endif
+#ifdef DSP_LCD
+    // On LCD there is no VOL dialog mode. Temporarily take over row 0:
+    // show "Vol:XX%  <IP>" via _meta (full width), restore after 3 s.
+    if (_meta && _mode == PLAYER && _bootStep == 2) {
+      char volIpBuf[MAX_WIDTH + 1];
+      char volPart[12];
+      snprintf(volPart, sizeof(volPart), voltxtFmt, vol);
+      snprintf(volIpBuf, sizeof(volIpBuf), "%-8s %s", volPart, config.ipToStr(WiFi.localIP()));
+      if (_volHideAt == 0) {
+        // First turn: take over row 0.
+        _meta->moveTo(metaMove);
+        _meta->setAlign(WA_LEFT);
+      }
+      _meta->setText(volIpBuf);
+      _volHideAt = millis() + 3000;
+    }
 #endif
     if (_mode == VOL) {
         timekeeper.waitAndReturnPlayer(3);
