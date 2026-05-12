@@ -299,6 +299,7 @@ enum AnimationType : uint8_t {
 	ANIM_SNAKE,
 	ANIM_CLOCK_ONLY,  // Keep existing clock behavior
 	ANIM_SOUND_METER, // Sound meter for LCD displays
+	ANIM_SPECTRUM,    // Pseudo-spectrum analyser using CGRAM vertical bars
 	ANIM_TYPE_COUNT   // Number of animation types
 };
 
@@ -319,7 +320,8 @@ const Animation animations[] = {
   {ballAnimation, sizeof(ballAnimation) / sizeof(AnimFrame), 100, ANIM_BALL, "BALL"},
   {snakeAnimation, sizeof(snakeAnimation) / sizeof(AnimFrame), 120, ANIM_SNAKE, "SNAKE"},
   {nullptr, 0, 0, ANIM_CLOCK_ONLY, "CLOCK_ONLY"},
-  {nullptr, 0, 0, ANIM_SOUND_METER, "SOUND_METER" }
+  {nullptr, 0, 0, ANIM_SOUND_METER, "SOUND_METER" },
+  {nullptr, 0, 0, ANIM_SPECTRUM,    "SPECTRUM"   }
 };
 
 // Animation definitions for 40x2 displays
@@ -331,7 +333,8 @@ const Animation animations40[] = {
   {ballAnimation40, sizeof(ballAnimation40) / sizeof(AnimFrame), 200, ANIM_BALL, "BALL"},
   {snakeAnimation40, sizeof(snakeAnimation40) / sizeof(AnimFrame), 200, ANIM_SNAKE, "SNAKE"},
   {clockAnimation40, sizeof(clockAnimation40) / sizeof(AnimFrame), 1000, ANIM_CLOCK_ONLY, "CLOCK_ONLY"},
-  { nullptr, 0, 0, ANIM_SOUND_METER, "SOUND_METER" }
+  { nullptr, 0, 0, ANIM_SOUND_METER, "SOUND_METER" },
+  { nullptr, 0, 0, ANIM_SPECTRUM,    "SPECTRUM"   }
 };
 
 #endif

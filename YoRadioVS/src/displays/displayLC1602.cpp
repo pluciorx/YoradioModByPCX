@@ -8,6 +8,156 @@
 #include "animations.h"
 #include "tools/commongfx.h"
 #include "conf/displayLCD1602conf.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+
+// ---------------------------------------------------------------------------
+// LCD write-offload — dual-core, coherent column rendering.
+//
+// Two item types share the queue:
+//
+//   SPECTRUM_FRAME — one whole spectrum frame. Core 1 writes the full bar area
+//                    in one burst, so right-side columns are not older than the
+//                    left side by a queue of per-column items.
+//
+//   WRITE_BUF      — arbitrary run (clock, station name). Core 1 does a normal
+//                    setCursor + sequential write.
+//
+// Core 0 (audio/WiFi) only enqueues items and returns in ~1 µs per item.
+// Core 1 owns all I2C transactions.
+// ---------------------------------------------------------------------------
+struct LcdCmd {
+    enum Type : uint8_t { SPECTRUM_FRAME, WRITE_BUF } type;
+    uint8_t col;
+    uint8_t row;       // used by WRITE_BUF
+    uint8_t barCols;   // SPECTRUM_FRAME: row-0 active width
+    uint8_t stBarCols; // SPECTRUM_FRAME: row-1 active width
+    uint8_t len;       // WRITE_BUF: number of bytes
+    uint64_t dirtyMask; // SPECTRUM_FRAME: bit N set = column N changed (max 40 cols)
+    char    buf[41];   // WRITE_BUF: payload / row-0 frame data
+    char    buf2[41];  // SPECTRUM_FRAME: row-1 frame data
+};
+
+static QueueHandle_t _lcdQueue     = nullptr; // depth-1 mailbox for SPECTRUM_FRAME (xQueueOverwrite)
+static QueueHandle_t _lcdTextQueue = nullptr; // depth-4 fifo for WRITE_BUF (clock, RDS, station name)
+static TaskHandle_t  _lcdTask  = nullptr;
+static SemaphoreHandle_t _lcdMutex = nullptr; // guards all direct LCD (I2C) access
+static volatile bool _lcdDropEnqueue = false; // true during direct-mode screen transitions
+static volatile bool _lcdAsyncSpectrum = false; // queue writes only while spectrum mode is active
+
+// Flush the queue and acquire the LCD mutex from Core 0.
+// Call before any direct LCD operation (clear, createChar, etc.).
+static void lcdAcquire() {
+    _lcdAsyncSpectrum = false;
+    _lcdDropEnqueue = true;
+    if (_lcdMutex) xSemaphoreTake(_lcdMutex, portMAX_DELAY);
+    if (_lcdQueue)     xQueueReset(_lcdQueue);     // drop stale spectrum frames
+    if (_lcdTextQueue) xQueueReset(_lcdTextQueue); // drop stale text writes
+}
+
+static void lcdRelease() {
+    _lcdDropEnqueue = false;
+    if (_lcdMutex) xSemaphoreGive(_lcdMutex);
+}
+
+static void lcdWriteTask(void* arg) {
+    DspCore* d = static_cast<DspCore*>(arg);
+    LcdCmd cmd;
+    for (;;) {
+        if (xQueueReceive(_lcdQueue, &cmd, pdMS_TO_TICKS(10)) != pdTRUE) {
+            vTaskDelay(1);
+            continue;
+        }
+        xSemaphoreTake(_lcdMutex, portMAX_DELAY);
+        if (cmd.type == LcdCmd::SPECTRUM_FRAME) {
+            // --- Write row0 (top) FIRST, then row1 (bottom) ---
+            // Rule: if a bar is not tall enough to fill the top cell, the top
+            // must be cleared BEFORE the bottom is updated. Writing top-first
+            // means a falling bar loses its top before its bottom grows, which
+            // avoids the "floating top" detachment artifact.
+            //
+            // We scan the dirtyMask and batch consecutive dirty columns into a
+            // single setCursor+write burst to minimise I2C transactions.
+
+            // Pass 1: row 0 (top half) — full bar area (barCols)
+            {
+                uint8_t i = 0;
+                while (i < cmd.barCols) {
+                    // skip clean columns
+                    while (i < cmd.barCols && !(cmd.dirtyMask & (1ULL << i))) i++;
+                    if (i >= cmd.barCols) break;
+                    uint8_t start = i;
+                    // extend run while columns are dirty AND contiguous
+                    while (i < cmd.barCols && (cmd.dirtyMask & (1ULL << i))) i++;
+                    d->setCursor(start, 0);
+                    for (uint8_t c = start; c < i; c++) d->write((uint8_t)cmd.buf[c]);
+                }
+            }
+
+            // Pass 2: row 1 (bottom half) — bar area only (stBarCols)
+            {
+                uint8_t i = 0;
+                while (i < cmd.stBarCols) {
+                    while (i < cmd.stBarCols && !(cmd.dirtyMask & (1ULL << i))) i++;
+                    if (i >= cmd.stBarCols) break;
+                    uint8_t start = i;
+                    while (i < cmd.stBarCols && (cmd.dirtyMask & (1ULL << i))) i++;
+                    d->setCursor(start, 1);
+                    for (uint8_t c = start; c < i; c++) d->write((uint8_t)cmd.buf2[c]);
+                }
+            }
+        } else { // WRITE_BUF
+            d->setCursor(cmd.col, cmd.row);
+            for (uint8_t i = 0; i < cmd.len; i++) d->write((uint8_t)cmd.buf[i]);
+        }
+        xSemaphoreGive(_lcdMutex);
+
+        // Drain all pending text items (clock blink, RDS, station name).
+        // Done after the spectrum frame so text is never starved.
+        if (_lcdTextQueue) {
+            LcdCmd txt;
+            while (xQueueReceive(_lcdTextQueue, &txt, 0) == pdTRUE) {
+                xSemaphoreTake(_lcdMutex, portMAX_DELAY);
+                txt.buf[txt.len] = '\0';
+                d->setCursor(txt.col, txt.row);
+                for (uint8_t i = 0; i < txt.len; i++) d->write((uint8_t)txt.buf[i]);
+                xSemaphoreGive(_lcdMutex);
+            }
+        }
+        vTaskDelay(1);
+    }
+}
+
+// Enqueue one full spectrum frame so all columns stay temporally aligned.
+// Uses xQueueOverwrite so Core 1 always renders the *newest* snapshot —
+// no backlog, no stale-frame lag. dirtyMask bit N = column N has changed.
+static inline void lcdQueueSpectrumFrame(const uint8_t* row0, const uint8_t* row1,
+                                          uint8_t barCols, uint8_t stBarCols,
+                                          uint64_t dirtyMask) {
+    if (!_lcdQueue || !_lcdAsyncSpectrum || _lcdDropEnqueue) return;
+    LcdCmd cmd{};
+    cmd.type      = LcdCmd::SPECTRUM_FRAME;
+    cmd.barCols   = barCols;
+    cmd.stBarCols = stBarCols;
+    cmd.dirtyMask = dirtyMask;
+    memcpy(cmd.buf,  row0, barCols);
+    memcpy(cmd.buf2, row1, stBarCols);
+    xQueueOverwrite(_lcdQueue, &cmd); // always succeeds, overwrites stale frame if queued
+}
+
+// Enqueue an arbitrary run (clock, station name, RDS) to the dedicated text queue.
+// This queue is separate from the spectrum mailbox so xQueueOverwrite on spectrum
+// frames can never clobber a clock or RDS item.
+static inline bool lcdQueuePrint(uint8_t col, uint8_t row, const char* s, uint8_t len) {
+    if (!_lcdTextQueue || !_lcdAsyncSpectrum || _lcdDropEnqueue || len == 0 || len > 40) return false;
+    LcdCmd cmd{};
+    cmd.type = LcdCmd::WRITE_BUF;
+    cmd.col  = col; cmd.row = row; cmd.len = len;
+    memcpy(cmd.buf, s, len);
+    return xQueueSend(_lcdTextQueue, &cmd, 0) == pdTRUE; // non-blocking: drop if full
+}
 
 // CGRAM custom chars (slots 1-6; slot 0 is avoided — it is \0 in C strings)
 // Slot 1: speaker pointing right  (used at left edge of L-bar)
@@ -51,6 +201,28 @@ static const uint8_t cgram_bar4[8] = { // slot 6  ████ 4/5
 };
 // 5/5 full block uses the LCD's native 0xFF character (no CGRAM needed)
 
+// Spectrum analyser vertical-fill CGRAM chars (slots 1-7).
+// Each character fills N rows from the BOTTOM of the 8-row cell (all 5 columns lit).
+// Slot 0 avoided (\0 in C strings). 0xFF = built-in full block (8/8).
+// Encoding: bar height 0..16 across two LCD rows.
+//   height 0     -> row0=' '  row1=' '
+//   height 1..8  -> row0=' '  row1=slot[height]  (slot8=0xFF)
+//   height 9..16 -> row0=slot[height-8]           row1=0xFF
+static const uint8_t cgram_vfill[7][8] = {
+  { 0,0,0,0,0,0,0,0b11111 }, // slot 1 — 1 row filled from bottom
+  { 0,0,0,0,0,0,0b11111,0b11111 }, // slot 2 — 2 rows
+  { 0,0,0,0,0,0b11111,0b11111,0b11111 }, // slot 3 — 3 rows
+  { 0,0,0,0,0b11111,0b11111,0b11111,0b11111 }, // slot 4 — 4 rows
+  { 0,0,0,0b11111,0b11111,0b11111,0b11111,0b11111 }, // slot 5 — 5 rows
+  { 0,0,0b11111,0b11111,0b11111,0b11111,0b11111,0b11111 }, // slot 6 — 6 rows
+  { 0,0b11111,0b11111,0b11111,0b11111,0b11111,0b11111,0b11111 }, // slot 7 — 7 rows
+};
+// slot mapping helper: height 1-7 -> cgram slot 1-7; height 8 -> 0xFF
+static inline char vfillChar(uint8_t h) {
+  if (h == 0) return ' ';
+  if (h >= 8) return (char)0xFF;
+  return (char)h; // slots 1-7 loaded into CGRAM positions 1-7
+}
 
 #ifndef SCREEN_ADDRESS
   #define SCREEN_ADDRESS 0x27 ///< See datasheet for Address or scan it https://create.arduino.cc/projecthub/abdularbi17/how-to-scan-i2c-address-in-arduino-eaadda
@@ -127,6 +299,14 @@ DspCore::DspCore(): DSP_INIT {
   _soundMeterPrevLine[0] = '\0';
   _soundMeterPrevClockLine[0] = '\0';
   _soundMeterVUMeterWasEnabled = false;
+  _spectrumMode = false;
+  _spectrumLastUpdate = 0;
+  _spectrumAutoPeak = 60;
+  memset(_spectrumMeas, 0, sizeof(_spectrumMeas));
+  memset(_spectrumPeak, 0, sizeof(_spectrumPeak));
+  memset(_spectrumPeakHold, 0, sizeof(_spectrumPeakHold));
+  _spectrumPrevRow0[0] = '\0';
+  _spectrumPrevRow1[0] = '\0';
 }
 
 void DspCore::apScreen() {
@@ -148,9 +328,7 @@ void DspCore::apScreen() {
 void DspCore::initDisplay() {
 #ifdef LCD_I2C
   init();
-  #ifdef LCD_4002
-    Wire.setClock(400000);
-  #endif
+  Wire.setClock(800000); // 800 kHz high-speed — some I2C LCD backpacks support this
   backlight();
 #else
   #ifdef LCD_2004
@@ -167,6 +345,14 @@ void DspCore::initDisplay() {
 // Slot 7 is left free for future use; native 0xFF = full-block bar.
 _loadCGRAM();
 
+  // Start Core-1 LCD write task (queued I2C offload)
+  if (_lcdQueue == nullptr) {
+    _lcdMutex     = xSemaphoreCreateMutex();
+    _lcdQueue     = xQueueCreate(1, sizeof(LcdCmd)); // mailbox: newest spectrum frame wins
+    _lcdTextQueue = xQueueCreate(4, sizeof(LcdCmd)); // fifo: clock / RDS / station text
+    xTaskCreatePinnedToCore(lcdWriteTask, "lcdWrite", 2048, this, 2, &_lcdTask, 1);
+  }
+
   clearClipping();
 }
 
@@ -177,6 +363,14 @@ void DspCore::_loadCGRAM() {
   createChar(4, (uint8_t*)cgram_bar2);      // 2/5 partial column
   createChar(5, (uint8_t*)cgram_bar3);      // 3/5 partial column
   createChar(6, (uint8_t*)cgram_bar4);      // 4/5 partial column
+}
+
+void DspCore::_loadSpectrumCGRAM() {
+  // Slots 1-7: vertical fill 1/8 .. 7/8 rows from bottom (5 columns wide).
+  // 0xFF = built-in full block (8/8) — no slot needed.
+  for (uint8_t i = 0; i < 7; i++) {
+    createChar(i + 1, (uint8_t*)cgram_vfill[i]);
+  }
 }
 
 void DspCore::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color){
@@ -207,29 +401,34 @@ uint16_t DspCore::height(){
 }
 
 void DspCore::clearDsp(bool black){
+  lcdAcquire();
   clear();
-  // Reload CGRAM: I2C noise from GPIO switching (especially the 2-pulse
-  // AUX->RADIO transition) can corrupt custom-character slots 1-6.
   _loadCGRAM();
-  // Reset sound-meter diff state so stale VU icon bytes (\x01-\x06)
-  // cannot bleed into the next widget render pass.
+  lcdRelease();
   _soundMeterPrevLine[0] = '\0';
   _soundMeterPrevClockLine[0] = '\0';
   _soundMeterMode = false;
+  _spectrumMode = false;
+  _spectrumPrevRow0[0] = '\0';
+  _spectrumPrevRow1[0] = '\0';
 }
 void DspCore::flip(){ }
 void DspCore::invert(){ }
-void DspCore::sleep(void) { 
+void DspCore::sleep(void) {
+  lcdAcquire();
   noDisplay();
 #ifdef LCD_I2C
   noBacklight();
 #endif
+  lcdRelease();
 }
-void DspCore::wake(void) { 
+void DspCore::wake(void) {
+  lcdAcquire();
   display();
 #ifdef LCD_I2C
   backlight();
 #endif
+  lcdRelease();
 }
 
 // Animation methods for screensaver
@@ -304,6 +503,7 @@ void DspCore::initScreensaver(AnimationType type) {
     lcdAnimController.begin(type);
     
     if (type == ANIM_SOUND_METER) {
+        _lcdAsyncSpectrum = false;
         // Initialize sound meter mode
         _soundMeterMode = true;
         _soundMeterLastUpdate = 0;
@@ -324,6 +524,7 @@ void DspCore::initScreensaver(AnimationType type) {
             config.store.vumeter = true;
         }
 		
+        lcdAcquire();
         // Show clock on line 1
         showSoundMeterClock(clockConf);
         // Clear line 2 for sound meter
@@ -335,23 +536,105 @@ void DspCore::initScreensaver(AnimationType type) {
         #else
           print("                "); // 16 spaces
         #endif
-    } else {
-        // Restore vumeter state if we had changed it for sound meter
+        lcdRelease();
+    } else if (type == ANIM_SPECTRUM) {
+        // Restore horizontal sound meter state if switching away from it
         if (_soundMeterMode && !_soundMeterVUMeterWasEnabled) {
             config.store.vumeter = false;
         }
-        
         _soundMeterMode = false;
+
+        // Spectrum mode init
+        _spectrumMode = true;
+        _spectrumLastUpdate = 0;
+        _spectrumAutoPeak = 60;
+        memset(_spectrumMeas, 0, sizeof(_spectrumMeas));
+        memset(_spectrumPeak, 0, sizeof(_spectrumPeak));
+        memset(_spectrumPeakHold, 0, sizeof(_spectrumPeakHold));
+        _spectrumPrevRow0[0] = '\0';
+        _spectrumPrevRow1[0] = '\0';
+
+        // Enable vumeter so getVUlevel() returns actual values
+        _soundMeterVUMeterWasEnabled = config.store.vumeter;
+        if (!config.store.vumeter) config.store.vumeter = true;
+
+        // All direct LCD operations below must be serialised with the write task.
+        lcdAcquire();
+
+        // Load vertical-fill CGRAM set
+        _loadSpectrumCGRAM();
+
+        // Clear both rows then draw initial clock (row 0 right) and station name (row 1 right)
+        {
+            uint16_t w = width();
+            char blank[41]; memset(blank, ' ', w); blank[w] = '\0';
+            setCursor(0, 0); print(blank);
+            setCursor(0, 1); print(blank);
+        }
+        {
+            char timeBuf[6];
+            strftime(timeBuf, sizeof(timeBuf), "%H:%M", &network.timeinfo);
+            #if DSP_MODEL==DSP_4002I2C
+            {
+                // Row 0: clock at col 35
+                setCursor(35, 0);
+                print(timeBuf);
+                // Row 0: station name at col 20 (14 chars, centered)
+                const char* sname = config.station.name;
+                uint8_t nameLen = (uint8_t)strnlen(sname, 64);
+                char stBuf[15];
+                memset(stBuf, ' ', 14);
+                if (nameLen <= 14) {
+                    uint8_t pad = (14 - nameLen) / 2;
+                    memcpy(stBuf + pad, sname, nameLen);
+                } else { memcpy(stBuf, sname, 14); }
+                stBuf[14] = '\0';
+                setCursor(20, 0);
+                print(stBuf);
+                // Row 1: RDS title at col 21 (19 chars)
+                const char* rtitle = config.station.title;
+                uint8_t rdsLen2 = (uint8_t)strnlen(rtitle, 64);
+                char rdsBuf[20];
+                memset(rdsBuf, ' ', 19);
+                if (rdsLen2 > 0) memcpy(rdsBuf, rtitle, rdsLen2 < 19 ? rdsLen2 : 19);
+                rdsBuf[19] = '\0';
+                setCursor(21, 1);
+                print(rdsBuf);
+            }
+            #else
+            {
+                const uint8_t barCols = (uint8_t)width() - 5;
+                setCursor(barCols, 0);
+                print(timeBuf);
+            }
+            #endif
+        }
+
+        lcdRelease();
+        _lcdAsyncSpectrum = true;
+    } else {
+        _lcdAsyncSpectrum = false;
+        // Restore vumeter state if it was changed for sound meter or spectrum
+        if ((_soundMeterMode || _spectrumMode) && !_soundMeterVUMeterWasEnabled) {
+            config.store.vumeter = false;
+        }
+        _soundMeterMode = false;
+        _spectrumMode = false;
+        lcdAcquire();
+        // Reload horizontal-bar CGRAM so next sound meter entry works correctly
+        _loadCGRAM();
         // Show first frame immediately
         const AnimFrame* frame = lcdAnimController.getCurrentFrame();
         showAnimationFrame(frame);
+        lcdRelease();
     }
 }
 
 void DspCore::updateScreensaver() {
     if (_soundMeterMode) {
-        // Update sound meter
         updateSoundMeter();
+    } else if (_spectrumMode) {
+        updateSpectrum();
     } else {
         // Regular animation
         if (lcdAnimController.needsUpdate()) {
@@ -606,6 +889,288 @@ void DspCore::updateSoundMeter() {
         lastSecond = network.timeinfo.tm_sec;
         showSoundMeterClock(clockConf);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Spectrum analyser — vertical bars across both LCD rows.
+//
+// Visual layout (all sizes):
+//   row 0: [bar × barCols][ HH:MM (5) ]
+//   row 1: [bar × barCols]
+//
+// Visual layout (40-col only):
+//   row 0: [bars 0..19][ station name 14 ][ ][ HH:MM ]
+//                       col 20            34  35
+//   row 1: [bars 0..19][ ][ RDS / track title 19 chars scrolling ]
+//                       20  21
+//
+// Each column = one spectrum band.
+// Bar height 0-16 (2 rows × 8 pixel rows):
+//   height 0     -> row0=' '  row1=' '
+//   height 1-8   -> row0=' '  row1=vfillChar(height)
+//   height 9-16  -> row0=vfillChar(height-8)  row1=0xFF
+//
+void DspCore::updateSpectrum() {
+    static uint8_t lastSecond = 0xFF;
+
+    #if defined(LCD_4002)
+      const uint8_t displayWidth = 40;
+    #elif defined(LCD_2004) || defined(LCD_2002)
+      const uint8_t displayWidth = 20;
+    #else
+      const uint8_t displayWidth = 16;
+    #endif
+
+    const uint32_t now = millis();
+    const uint16_t updateIntervalMs = 25; // ~40 fps — suits 400 kHz I2C budget
+    if (_spectrumLastUpdate != 0 && (now - _spectrumLastUpdate) < updateIntervalMs) return;
+    _spectrumLastUpdate = now;
+
+    // --- Real FFT spectrum bands (6 bands, 0-255 each) ---
+    constexpr uint8_t FFT_N = 6;
+    uint8_t fftBands[FFT_N] = {0};
+    bool played = player.isRunning();
+    if (played) {
+        player.getSpectrumBands(fftBands, FFT_N);
+    }
+
+    // Layout (all sizes):
+    //   row 0: [bars 0..barCols-1][ clock 5 chars ]
+    //   row 1: [bars 0..stBarCols-1][ gap + station name (40-col only) ]
+    //
+    // On 40-col the spectrum is capped at 20 columns so the right half of the
+    // display is always free for station name / clock and other I2C devices get
+    // regular bus gaps between bursts.
+    const uint8_t clockLen  = 5;
+    #if DSP_MODEL==DSP_4002I2C
+    const uint8_t barCols   = 20;   // spectrum bar columns (both rows)
+    const uint8_t stBarCols = 20;
+    const uint8_t stNameLen = 14;   // station name: row 0 cols 20-33
+    const uint8_t stNameCol = 20;
+    const uint8_t clockCol  = 35;   // clock: row 0 cols 35-39 (col 34 = gap)
+    const uint8_t rdsLen    = 19;   // RDS/title: row 1 cols 21-39 (col 20 = gap)
+    const uint8_t rdsCol    = 21;
+    #else
+    const uint8_t barCols   = displayWidth - clockLen;
+    const uint8_t stBarCols = barCols;
+    const uint8_t clockCol  = barCols;
+    #endif
+
+    // Per-band frequency weighting (×/256 fixed-point).
+    // Bass is kept at ×1.0 — kick drums need full dynamic range.
+    // Mids get a gentle lift; treble is boosted so hi-hats/snare are visible.
+    // Weights: band0(bass)=1.00  band1=1.10  band2=1.20
+    //          band3=1.40  band4=1.70  band5(treble)=2.20
+    static const uint16_t bandWeight[6] = { 256, 282, 307, 358, 435, 563 };
+    uint8_t wBands[FFT_N];
+    for (uint8_t i = 0; i < FFT_N; i++) {
+        uint32_t w = ((uint32_t)fftBands[i] * bandWeight[i]) >> 8;
+        wBands[i] = (w > 255) ? 255 : (uint8_t)w;
+    }
+
+    // Auto-peak: driven by the RAW (unweighted) max so treble boost cannot
+    // inflate the scale and crush bass. Each band is still displayed with its
+    // weighted value, but they all compete against the same raw ceiling.
+    // Decay is time-gated so a quiet passage doesn't collapse the scale and
+    // make background noise fill the display. Hard floor at 40.
+    static uint32_t autoPeakDecayAt = 0;
+    if (played) {
+        uint8_t rawPeak = 0;
+        for (uint8_t i = 0; i < FFT_N; i++) if (fftBands[i] > rawPeak) rawPeak = fftBands[i];
+        if (rawPeak > _spectrumAutoPeak) {
+            _spectrumAutoPeak = rawPeak;
+            autoPeakDecayAt = now + 1500; // hold 1.5 s before allowing decay
+        } else if (now >= autoPeakDecayAt && _spectrumAutoPeak > 40) {
+            _spectrumAutoPeak--; // ~1 step per 25 ms once hold expires
+        }
+    }
+    const uint8_t scaleTop = (_spectrumAutoPeak > 40) ? _spectrumAutoPeak : 40;
+
+    // --- Compute new character codes (Core 0, pure computation, no I2C) ---
+    uint8_t newR0[40], newR1[40];
+
+    for (uint8_t b = 0; b < stBarCols; b++) {
+        uint16_t pos_fp = (stBarCols > 1) ? (uint16_t)b * (FFT_N - 1) * 256 / (stBarCols - 1) : 0;
+        uint8_t loIdx   = (uint8_t)(pos_fp >> 8);
+        uint8_t frac    = (uint8_t)(pos_fp & 0xFF);
+        uint8_t hiIdx   = (loIdx < FFT_N - 1) ? loIdx + 1 : loIdx;
+        uint8_t raw     = (uint8_t)(((uint16_t)wBands[loIdx] * (256 - frac) +
+                                     (uint16_t)wBands[hiIdx] * frac) >> 8);
+
+        // Scale against auto-peak so bars reach full 16-step range
+        uint16_t targetH = ((uint16_t)raw * 16 + scaleTop / 2) / scaleTop;
+        if (targetH > 16) targetH = 16;
+
+        // Attack/decay smoothing
+        if (played) {
+            if (targetH >= _spectrumMeas[b]) {
+                _spectrumMeas[b] = targetH;
+            } else {
+                const uint16_t releaseStep = 2;
+                const uint16_t decayed = (_spectrumMeas[b] > releaseStep) ? _spectrumMeas[b] - releaseStep : 0;
+                _spectrumMeas[b] = (targetH > decayed) ? targetH : decayed;
+            }
+        } else {
+            const uint16_t stopFade = 3;
+            _spectrumMeas[b] = (_spectrumMeas[b] > stopFade) ? _spectrumMeas[b] - stopFade : 0;
+        }
+        if (_spectrumMeas[b] > 16) _spectrumMeas[b] = 16;
+
+        uint8_t h = (uint8_t)_spectrumMeas[b];
+
+        // Peak dot tracking
+        const uint8_t peakH = (h > 15) ? 15 : h;
+        if (peakH >= _spectrumPeak[b]) {
+            _spectrumPeak[b] = peakH;
+            _spectrumPeakHold[b] = now + 600;
+        } else if (now > _spectrumPeakHold[b] && _spectrumPeak[b] > 0) {
+            _spectrumPeak[b]--;
+        }
+
+        // Encode into two characters
+        uint8_t topChar, botChar;
+        if (h == 0) {
+            botChar = ' '; topChar = ' ';
+        } else if (h <= 8) {
+            botChar = (uint8_t)vfillChar(h); topChar = ' ';
+        } else {
+            botChar = 0xFF; topChar = (uint8_t)vfillChar(h - 8);
+        }
+
+        // Peak dot: one step above bar top, but NEVER in a row the bar doesn't reach.
+        // Rule: if h <= 8, bar is wholly in the bottom row — peak must stay there too.
+        // Putting a peak dot in the top row while the bar is in the bottom row creates
+        // the "floating / detached top" artifact.
+        uint8_t pk = _spectrumPeak[b];
+        if (pk > h && pk > 0) {
+            if (pk <= 8 || h <= 8) {
+                // Peak stays in bottom row — cap it there
+                uint8_t pkBot = (pk > 8) ? 8 : pk; // never exceed full-bottom
+                if (botChar == ' ') botChar = (uint8_t)vfillChar(pkBot);
+            } else {
+                // Both bar and peak are in the top row
+                if (topChar == ' ') topChar = (uint8_t)vfillChar(pk - 8);
+            }
+        }
+
+        newR1[b] = botChar;
+        newR0[b] = topChar;
+    }
+
+    // --- Build dirty mask
+    //
+    // Coherence rule: if column b has no top (newR0[b]==' ') then the top
+    // character never appears. Both row0 and row1 are always written together
+    // per column (via the dirty mask), so the LCD never sees a half-column
+    // update. xQueueOverwrite guarantees Core 1 always renders the freshest
+    // snapshot — no backlog, no right-side lag.
+
+    const bool fresh = (_spectrumPrevRow0[0] == '\0');
+    uint64_t dirtyMask = 0;
+
+    // Spectrum bar columns
+    for (uint8_t b = 0; b < stBarCols; b++) {
+        if (fresh ||
+            (uint8_t)_spectrumPrevRow0[b] != newR0[b] ||
+            (uint8_t)_spectrumPrevRow1[b] != newR1[b]) {
+            dirtyMask |= (1ULL << b);
+        }
+    }
+    if (dirtyMask) {
+        lcdQueueSpectrumFrame(newR0, newR1, barCols, stBarCols, dirtyMask);
+        // Update prev state unconditionally: xQueueOverwrite always delivers the
+        // frame, so the state will be on screen after the next Core-1 tick.
+        memcpy(_spectrumPrevRow0, newR0, barCols);
+        memcpy(_spectrumPrevRow1, newR1, stBarCols);
+    }
+
+    if (fresh) {
+        _spectrumPrevRow0[barCols]   = '\0';
+        _spectrumPrevRow1[stBarCols] = '\0';
+    }
+
+    // --- Clock blink every 500 ms (colon on/off); full HH:MM reformat every 10 s ---
+    // Runs independently of the spectrum frame rate — no I2C cost on Core 0.
+    {
+        static uint32_t lastClockBlink = 0;
+        static bool colonOn = true;
+
+        if (now - lastClockBlink >= 500) {
+            lastClockBlink = now;
+            colonOn = !colonOn;
+
+            char timeBuf[6];
+            strftime(timeBuf, sizeof(timeBuf), "%H:%M", &network.timeinfo);
+            if (!colonOn) timeBuf[2] = ' '; // blink the colon
+            lcdQueuePrint(clockCol, 0, timeBuf, clockLen);
+        }
+    }
+
+    #if DSP_MODEL==DSP_4002I2C
+    // --- Station name: update once per second (scrolls if longer than 14 chars) ---
+    if (network.timeinfo.tm_sec != lastSecond) {
+        lastSecond = network.timeinfo.tm_sec;
+        static uint8_t stScrollOffset = 0;
+        static char prevStBuf[15] = {};
+        const char* sname = config.station.name;
+        uint8_t nameLen = (uint8_t)strnlen(sname, 128);
+        char stBuf[15];
+        memset(stBuf, ' ', stNameLen);
+        if (nameLen <= stNameLen) {
+            uint8_t pad = (stNameLen - nameLen) / 2;
+            memcpy(stBuf + pad, sname, nameLen);
+            stScrollOffset = 0;
+        } else {
+            memcpy(stBuf, sname + stScrollOffset, stNameLen);
+            stScrollOffset = (stScrollOffset + 1 + stNameLen > nameLen) ? 0 : stScrollOffset + 1;
+        }
+        stBuf[stNameLen] = '\0';
+        if (memcmp(prevStBuf, stBuf, stNameLen) != 0) {
+            lcdQueuePrint(stNameCol, 0, stBuf, stNameLen);
+            memcpy(prevStBuf, stBuf, stNameLen + 1);
+        }
+    }
+
+    // --- RDS / track title: scroll every 300 ms, fully independent of clock ---
+    {
+        static uint32_t lastRdsScroll = 0;
+        static uint8_t  rdsScrollOffset = 0;
+        static char     prevRdsBuf[20] = {};
+        static char     prevRdsSource[129] = {}; // reset scroll when title changes
+
+        if (now - lastRdsScroll >= 300) {
+            lastRdsScroll = now;
+
+            const char* rtitle = config.station.title;
+            uint8_t rdsTextLen = (uint8_t)strnlen(rtitle, 128);
+
+            // Reset scroll position whenever the title text changes
+            if (strncmp(prevRdsSource, rtitle, 128) != 0) {
+                strncpy(prevRdsSource, rtitle, 128);
+                prevRdsSource[128] = '\0';
+                rdsScrollOffset = 0;
+                prevRdsBuf[0] = '\0'; // force redraw
+            }
+
+            char rdsBuf[20];
+            memset(rdsBuf, ' ', rdsLen);
+            if (rdsTextLen > 0) {
+                if (rdsTextLen <= rdsLen) {
+                    memcpy(rdsBuf, rtitle, rdsTextLen);
+                    rdsScrollOffset = 0;
+                } else {
+                    memcpy(rdsBuf, rtitle + rdsScrollOffset, rdsLen);
+                    rdsScrollOffset = (rdsScrollOffset + 1 + rdsLen > rdsTextLen) ? 0 : rdsScrollOffset + 1;
+                }
+            }
+            rdsBuf[rdsLen] = '\0';
+            if (memcmp(prevRdsBuf, rdsBuf, rdsLen) != 0) {
+                lcdQueuePrint(rdsCol, 1, rdsBuf, rdsLen);
+                memcpy(prevRdsBuf, rdsBuf, rdsLen + 1);
+            }
+        }
+    }
+    #endif
 }
 
 #endif

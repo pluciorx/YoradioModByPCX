@@ -6429,9 +6429,9 @@ void Audio::calculateVolumeLimits() { // is calculated when the volume or balanc
 // —————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 void Audio::processSpectrum() {
 
-    // --- 10 Hz update ---
+    // --- 40 Hz update ---
     uint32_t now = millis();
-    if (now - m_fft_items.last_ms < 100) return;
+    if (now - m_fft_items.last_ms < 25) return;
     m_fft_items.last_ms = now;
 
     // --- Window + real → complex ---

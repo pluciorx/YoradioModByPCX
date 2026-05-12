@@ -68,8 +68,10 @@ class DspCore: public yoDisplay {
       // Sound meter methods
       void updateSoundMeter();  
       void showSoundMeterClock(const WidgetConfig& config);
+      void updateSpectrum();
     private:
       void _loadCGRAM();
+      void _loadSpectrumCGRAM();
     public:
     #endif
     void flip();
@@ -126,7 +128,17 @@ class DspCore: public yoDisplay {
     uint8_t _soundMeterAutoPeak;
     char _soundMeterPrevLine[41];
     char _soundMeterPrevClockLine[41];
-    bool _soundMeterVUMeterWasEnabled; // Store previous vumeter state
+    bool _soundMeterVUMeterWasEnabled;
+    // Spectrum analyser state
+    static const uint8_t SPECTRUM_BANDS = 40; // max display width; actual used = displayWidth
+    bool _spectrumMode;
+    uint32_t _spectrumLastUpdate;
+    uint8_t _spectrumAutoPeak;
+    uint16_t _spectrumMeas[SPECTRUM_BANDS];   // smoothed level per band (0..16)
+    uint8_t  _spectrumPeak[SPECTRUM_BANDS];   // peak dot per band (0..16)
+    uint32_t _spectrumPeakHold[SPECTRUM_BANDS];
+    char _spectrumPrevRow0[41];
+    char _spectrumPrevRow1[41];
     #endif
 };
 
