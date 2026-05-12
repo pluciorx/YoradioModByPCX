@@ -41,7 +41,7 @@ struct LcdCmd {
 };
 
 static QueueHandle_t _lcdQueue     = nullptr; // depth-1 mailbox for SPECTRUM_FRAME (xQueueOverwrite)
-static QueueHandle_t _lcdTextQueue = nullptr; // depth-4 fifo for WRITE_BUF (clock, RDS, station name)
+static QueueHandle_t _lcdTextQueue = nullptr; // depth-8 fifo for WRITE_BUF (clock, RDS, station name)
 static TaskHandle_t  _lcdTask  = nullptr;
 static SemaphoreHandle_t _lcdMutex = nullptr; // guards all direct LCD (I2C) access
 static volatile bool _lcdDropEnqueue = false; // true during direct-mode screen transitions
@@ -349,7 +349,7 @@ _loadCGRAM();
   if (_lcdQueue == nullptr) {
     _lcdMutex     = xSemaphoreCreateMutex();
     _lcdQueue     = xQueueCreate(1, sizeof(LcdCmd)); // mailbox: newest spectrum frame wins
-    _lcdTextQueue = xQueueCreate(4, sizeof(LcdCmd)); // fifo: clock / RDS / station text
+    _lcdTextQueue = xQueueCreate(8, sizeof(LcdCmd)); // fifo: clock / RDS / station text
     xTaskCreatePinnedToCore(lcdWriteTask, "lcdWrite", 2048, this, 2, &_lcdTask, 1);
   }
 

@@ -50,6 +50,7 @@ static uint32_t _favoriteMarkerHideAt = 0;
 static char _favoriteMarkerSavedName[BUFLEN] = {0};
 
 QueueHandle_t displayQueue;
+QueueHandle_t displayVolQueue;
 
 static void loopDspTask(void * pvParameters){
   while(true){
@@ -116,8 +117,11 @@ void Display::init() {
   _bootStep = 0;
   dsp.initDisplay();
   displayQueue=NULL;
-  displayQueue = xQueueCreate( 10, sizeof( requestParams_t ) );
+  displayQueue = xQueueCreate( 20, sizeof( requestParams_t ) );
   while(displayQueue==NULL){;}
+  displayVolQueue=NULL;
+  displayVolQueue = xQueueCreate( 1, sizeof( requestParams_t ) );
+  while(displayVolQueue==NULL){;}
   _createDspTask();
   while(!_bootStep==0) { delay(10); }
   //_pager.begin();
@@ -421,6 +425,7 @@ void Display::_swichMode(displayMode_e newmode) {
 
 void Display::resetQueue(){
   if(displayQueue!=NULL) xQueueReset(displayQueue);
+  if(displayVolQueue!=NULL) xQueueReset(displayVolQueue);
 }
 
 void Display::_drawPlaylist() {
@@ -440,7 +445,13 @@ void Display::putRequest(displayRequestType_e type, int payload){
   requestParams_t request;
   request.type = type;
   request.payload = payload;
-  xQueueSend(displayQueue, &request, DSQ_SEND_DELAY);
+  // High-frequency encoder events: overwrite the mailbox so only the newest value
+  // is ever rendered — no backlog, no stale lag, no dropped items.
+  if ((type == DRAWVOL || type == MENU_UPDATE) && displayVolQueue != NULL) {
+    xQueueOverwrite(displayVolQueue, &request);
+  } else {
+    xQueueSend(displayQueue, &request, DSQ_SEND_DELAY);
+  }
   #ifdef USE_NEXTION
     nextion.putRequest(request);
   #endif
@@ -661,12 +672,25 @@ void Display::loop() {
           break;
         }
         default: break;
-
-        // check if there are more messages waiting in the Q, in this case break the loop() and go
-        // for another round to evict next message, do not waste time to redraw the screen, etc...
-        if (uxQueueMessagesWaiting(displayQueue))
-          return;
       }
+  }
+
+  // Drain the vol/menu overwrite mailbox: process the newest value if available.
+  // This runs every loop() call so the display always reflects the latest
+  // volume or enc2 menu value without waiting for a full task cycle.
+  if (displayVolQueue != NULL) {
+    requestParams_t vrequest;
+    if (xQueueReceive(displayVolQueue, &vrequest, 0) == pdTRUE) {
+      bool pm_result = true;
+      pm.on_display_queue(vrequest, pm_result);
+      if (pm_result) {
+        if (vrequest.type == DRAWVOL) _volume();
+        else if (vrequest.type == MENU_UPDATE && _mode == ENC2MENU) {
+          _meta->setText(enc2menu_label);
+          _nums->setText(enc2menu_value);
+        }
+      }
+    }
   }
 
   #ifdef DSP_LCD

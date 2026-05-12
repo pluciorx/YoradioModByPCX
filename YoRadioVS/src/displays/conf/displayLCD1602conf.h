@@ -34,7 +34,7 @@
 
 /* SROLLS  */                            /* {{ left, top, fontsize, align }, buffsize, uppercase, width, scrolldelay, scrolldelta, scrolltime } */
 #define SDELTA      2
-#define STIME       400
+#define STIME       250
 const ScrollConfig      metaConf   PROGMEM = { { 9, 0, 1, WA_CENTER }, 140, true, MAX_WIDTH - 14, 2000, SDELTA, STIME };
 const ScrollConfig    title1Conf   PROGMEM = { { 0, 1, 1, WA_LEFT }, 140, false, MAX_WIDTH - 7, 2000, SDELTA, STIME };
 const ScrollConfig  playlistConf   PROGMEM = { { 1, 1, 1, WA_LEFT }, 140, true, MAX_WIDTH - 1, 2000, SDELTA, STIME };
