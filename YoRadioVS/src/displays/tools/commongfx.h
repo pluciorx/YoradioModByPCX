@@ -134,7 +134,7 @@ class DspCore: public yoDisplay {
     bool _spectrumMode;
     uint32_t _spectrumLastUpdate;
     uint8_t _spectrumAutoPeak;
-    uint16_t _spectrumMeas[SPECTRUM_BANDS];   // smoothed level per band (0..16)
+    float    _spectrumMeas[SPECTRUM_BANDS];   // smoothed level per band (0.0..16.0)
     uint8_t  _spectrumPeak[SPECTRUM_BANDS];   // peak dot per band (0..16)
     uint32_t _spectrumPeakHold[SPECTRUM_BANDS];
     char _spectrumPrevRow0[41];

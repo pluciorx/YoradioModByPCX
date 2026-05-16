@@ -376,7 +376,7 @@ struct vu_items_t {
     uint16_t        right_hold = 0;
 };
 
-#define FFT_BANDS 6
+#define FFT_BANDS 20
 #define FFT_SIZE  256
 struct fft_items_t {
     const uint16_t SIZE = FFT_SIZE;

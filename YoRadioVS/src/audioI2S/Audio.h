@@ -145,7 +145,7 @@ class Audio {
     uint16_t         getVUlevel();
     uint16_t         getVUlevelEnvelope();
     // Returns up to `count` FFT spectrum band values (0-255) into `bands`.
-    // `count` is clamped to FFT_BANDS (6). Returns actual number of bands filled.
+    // `count` is clamped to FFT_BANDS (20). Returns actual number of bands filled.
     uint8_t          getSpectrumBands(uint8_t* bands, uint8_t count) {
         uint8_t n = (count < m_fft_items.BANDS) ? count : m_fft_items.BANDS;
         for (uint8_t i = 0; i < n; i++) bands[i] = m_fft_items.spectrum[i];

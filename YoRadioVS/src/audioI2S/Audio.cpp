@@ -6244,20 +6244,36 @@ void Audio::calculateVUlevel(int32_t* sample) { // Envelope-Follower
     float mono = 0.5f * (float)((m_vu_items.delay_l[pos] >> 20) + (m_vu_items.delay_r[pos] >> 20));
 
     // --- FFT analyzer AGC ---
-    constexpr float TARGET = 0.1f; // gewünschte RMS-Amplitude
-    constexpr float ATTACK = 0.05f;
-    constexpr float RELEASE_FFT = 0.005f;
+    // mono is 0.5 * (int32_t_sample >> 20), so full-scale audio gives mono ~2048.
+    // SILENCE_THR must be in those same units — 1e-4 was effectively zero.
+    // RELEASE_FFT is slow so quiet passages within a song don't get boosted to
+    // TARGET before the song moves on; cross-station normalization still works
+    // over the longer ~20-second time constant.
+    // During silence the gain decays toward a small value (not 1.0) so bars
+    // start low when music resumes rather than spiking on the first frames.
+    constexpr float TARGET       = 0.1f;   // desired RMS amplitude
+    constexpr float ATTACK       = 0.05f;
+    constexpr float RELEASE_FFT  = 0.001f; // slow rise — quiet passages stay quiet
+    constexpr float GAIN_MAX     = 20.0f;  // hard ceiling — prevent extreme amplification
+    constexpr float SILENCE_THR  = 1.0f;   // mono units: ~-66 dBFS, true silence only
 
     float level = fabsf(mono);
 
-    if (level > 1e-6f) {
+    if (level > SILENCE_THR) {
+        // Active signal: steer gain toward TARGET/level
         float desired = TARGET / level;
+        if (desired > GAIN_MAX) desired = GAIN_MAX;
         if (desired < m_fft_items.gain)
-            m_fft_items.gain += ATTACK * (desired - m_fft_items.gain);
+            m_fft_items.gain += ATTACK      * (desired - m_fft_items.gain);
         else
             m_fft_items.gain += RELEASE_FFT * (desired - m_fft_items.gain);
+    } else {
+        // Silence: decay gain toward a small value so bars go flat and
+        // don't spike when audio resumes at a quiet level.
+        m_fft_items.gain += RELEASE_FFT * (0.005f - m_fft_items.gain);
+        mono = 0.0f;
     }
-    if (fabsf(mono) < 1e-4f) mono = 0.0f;
+    if (m_fft_items.gain > GAIN_MAX) m_fft_items.gain = GAIN_MAX;
     mono *= m_fft_items.gain;
 
     m_fft_items.buffer[m_fft_items.buffer_index] = mono;
@@ -6448,9 +6464,17 @@ void Audio::processSpectrum() {
     const float bin_hz = (float)m_i2s_items.sampleRate / m_fft_items.SIZE;
     const float norm = 2.0f / m_fft_items.SIZE;
 
-    // --- 5 internal bands ---
-    float band[m_fft_items.BANDS] = {0};
-    int   bins[m_fft_items.BANDS] = {0};
+    // --- Log-spaced output bands ---
+    float band[FFT_BANDS] = {0};
+    int   bins[FFT_BANDS] = {0};
+    // Anchor MIN_FREQ to the first real FFT bin so the log range starts where
+    // actual data exists.  With FFT_SIZE=256 at 44100 Hz bin_hz ~172 Hz, a
+    // fixed 60 Hz floor leaves bands 0-2 permanently empty and causes visible
+    // gaps at the low end of the display.
+    const float MIN_FREQ = bin_hz;
+    constexpr float MAX_FREQ = 16000.0f;
+    const float logMinFreq = logf(MIN_FREQ);
+    const float invLogRange = 1.0f / (logf(MAX_FREQ) - logMinFreq);
 
     for (int i = 1; i < m_fft_items.SIZE / 2; i++) {
 
@@ -6460,28 +6484,12 @@ void Audio::processSpectrum() {
         float f = i * bin_hz;
 
         int b = -1;
-        if (f < 250)
-            b = 0;
-        else if (f < 400)
-            b = -1;
-        else if (f < 700)
-            b = 1;
-        else if (f < 1000)
-            b = -1;
-        else if (f < 1550)
-            b = 2;
-        else if (f < 2200)
-            b = -1;
-        else if (f < 4250)
-            b = 3;
-        else if (f < 6300)
-            b = -1;
-        else if (f < 11150)
-            b = 4;
-        else if (f < 16000)
-            b = 5;
-        else
-            b = -1;
+        if (f >= MIN_FREQ && f <= MAX_FREQ) {
+            float pos = (logf(f) - logMinFreq) * invLogRange;
+            if (pos < 0.0f) pos = 0.0f;
+            if (pos >= 1.0f) pos = 0.999999f;
+            b = (int)(pos * m_fft_items.BANDS);
+        }
 
         if (b >= 0) {
             band[b] += mag * mag;
@@ -6497,21 +6505,43 @@ void Audio::processSpectrum() {
             band[i] = 0.0f;
     }
 
-    // band weighting (psychoacoustic / UI)
-    band[0] *= 0.5f;
-    band[1] *= 0.8f;
-    band[2] *= 3.0f;
-    band[3] *= 2.8f;
-    band[4] *= 1.5f;
-    band[5] *= 1.5f;
+    // Fill any bands that still have no FFT bins by interpolating from the
+    // nearest filled neighbours.  Log-scale compression at the low end means
+    // a few bands can still be narrower than one bin even after raising MIN_FREQ.
+    for (int i = 0; i < m_fft_items.BANDS; i++) {
+        if (bins[i] == 0) {
+            int left = i - 1;
+            while (left >= 0 && bins[left] == 0) left--;
+            int right = i + 1;
+            while (right < m_fft_items.BANDS && bins[right] == 0) right++;
+            float lv = (left  >= 0)                  ? band[left]  : 0.0f;
+            float rv = (right < m_fft_items.BANDS)   ? band[right] : 0.0f;
+            if      (left  < 0)                   band[i] = rv;
+            else if (right >= m_fft_items.BANDS)  band[i] = lv;
+            else                                  band[i] = (lv + rv) * 0.5f;
+        }
+    }
 
     // log scale
     for (int i = 0; i < m_fft_items.BANDS; i++) { band[i] = log10f(band[i] + 1e-6f); }
 
+    // Pink-noise / 1/f tilt correction applied in dB space.
+    // +3 dB/octave rising slope counteracts the natural bass-heavy energy
+    // distribution of audio.  The correction is centred on mid-band so the
+    // overall level is unchanged — only the slope is adjusted.
+    // 20 bands over ~6.5 octaves → +0.975 dB/band = 0.04875 log10-units/band.
+    // Centring offset = (BANDS-1)/2 so the middle band gets zero correction.
+    {
+        const float step  = 0.04875f;                         // log10 units per band
+        const float pivot = (m_fft_items.BANDS - 1) * 0.5f;  // band 9.5
+        for (int i = 0; i < m_fft_items.BANDS; i++)
+            band[i] += (i - pivot) * step;
+    }
+
     // --- temporal smoothing (only displayed bands) ---
     auto smooth = [](float old, float in) {
-        constexpr float ATTACK = 0.6f;
-        constexpr float RELEASE = 0.6f;
+        constexpr float ATTACK  = 0.85f;  // fast attack  — bars snap up quickly
+        constexpr float RELEASE = 0.75f;  // fast release — bars fall without lag
         return (in > old) ? old + ATTACK * (in - old) : old + RELEASE * (in - old);
     };
 
@@ -6533,7 +6563,7 @@ void Audio::processSpectrum() {
         m_fft_items.spectrum[i] = (uint8_t)(norm * 255.0f);
     }
     //    AUDIO_LOG_INFO("% 4i, % 4i, % 4i, % 4i, % 4i, % 4i ", m_fft_items.spectrum[0], m_fft_items.spectrum[1],  m_fft_items.spectrum[2],  m_fft_items.spectrum[3],  m_fft_items.spectrum[4],
-    //    m_fft_items.spectrum[3]);
+    //    m_fft_items.spectrum[5]);
 }
 // —————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 void Audio::Gain(int32_t* sample) {

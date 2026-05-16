@@ -922,17 +922,9 @@ void DspCore::updateSpectrum() {
     #endif
 
     const uint32_t now = millis();
-    const uint16_t updateIntervalMs = 25; // ~40 fps — suits 400 kHz I2C budget
+    const uint16_t updateIntervalMs = 16; // ~60 fps — suits 400 kHz I2C budget
     if (_spectrumLastUpdate != 0 && (now - _spectrumLastUpdate) < updateIntervalMs) return;
     _spectrumLastUpdate = now;
-
-    // --- Real FFT spectrum bands (6 bands, 0-255 each) ---
-    constexpr uint8_t FFT_N = 6;
-    uint8_t fftBands[FFT_N] = {0};
-    bool played = player.isRunning();
-    if (played) {
-        player.getSpectrumBands(fftBands, FFT_N);
-    }
 
     // Layout (all sizes):
     //   row 0: [bars 0..barCols-1][ clock 5 chars ]
@@ -956,67 +948,69 @@ void DspCore::updateSpectrum() {
     const uint8_t clockCol  = barCols;
     #endif
 
-    // Per-band frequency weighting (×/256 fixed-point).
-    // Bass is kept at ×1.0 — kick drums need full dynamic range.
-    // Mids get a gentle lift; treble is boosted so hi-hats/snare are visible.
-    // Weights: band0(bass)=1.00  band1=1.10  band2=1.20
-    //          band3=1.40  band4=1.70  band5(treble)=2.20
-    static const uint16_t bandWeight[6] = { 256, 282, 307, 358, 435, 563 };
-    uint8_t wBands[FFT_N];
-    for (uint8_t i = 0; i < FFT_N; i++) {
-        uint32_t w = ((uint32_t)fftBands[i] * bandWeight[i]) >> 8;
-        wBands[i] = (w > 255) ? 255 : (uint8_t)w;
+    // --- Real FFT spectrum bands (one source band per visible column) ---
+    const uint8_t fftBandCount = stBarCols;
+    uint8_t fftBands[40] = {0};
+    bool played = player.isRunning();
+    if (played) {
+        player.getSpectrumBands(fftBands, fftBandCount);
     }
 
-    // Auto-peak: driven by the RAW (unweighted) max so treble boost cannot
-    // inflate the scale and crush bass. Each band is still displayed with its
-    // weighted value, but they all compete against the same raw ceiling.
-    // Decay is time-gated so a quiet passage doesn't collapse the scale and
-    // make background noise fill the display. Hard floor at 40.
+    // Auto-peak uses the raw source bands directly.
+    // Decay is time-gated so a transient loud peak doesn't immediately
+    // collapse; but quiet passages let the scale contract fairly quickly.
+    // Hard floor at 20 (instead of 40) so bars can fall low during silence.
     static uint32_t autoPeakDecayAt = 0;
     if (played) {
         uint8_t rawPeak = 0;
-        for (uint8_t i = 0; i < FFT_N; i++) if (fftBands[i] > rawPeak) rawPeak = fftBands[i];
+        for (uint8_t i = 0; i < fftBandCount; i++) if (fftBands[i] > rawPeak) rawPeak = fftBands[i];
         if (rawPeak > _spectrumAutoPeak) {
             _spectrumAutoPeak = rawPeak;
-            autoPeakDecayAt = now + 1500; // hold 1.5 s before allowing decay
-        } else if (now >= autoPeakDecayAt && _spectrumAutoPeak > 40) {
-            _spectrumAutoPeak--; // ~1 step per 25 ms once hold expires
+            autoPeakDecayAt = now + 500; // hold 0.5 s before allowing decay
+        } else if (now >= autoPeakDecayAt && _spectrumAutoPeak > 60) {
+            _spectrumAutoPeak -= 3; // 3 steps per 16 ms — snappy auto-scale collapse
         }
     }
-    const uint8_t scaleTop = (_spectrumAutoPeak > 40) ? _spectrumAutoPeak : 40;
+    const uint8_t scaleTop = (_spectrumAutoPeak > 60) ? _spectrumAutoPeak : 60;
 
     // --- Compute new character codes (Core 0, pure computation, no I2C) ---
     uint8_t newR0[40], newR1[40];
 
     for (uint8_t b = 0; b < stBarCols; b++) {
-        uint16_t pos_fp = (stBarCols > 1) ? (uint16_t)b * (FFT_N - 1) * 256 / (stBarCols - 1) : 0;
-        uint8_t loIdx   = (uint8_t)(pos_fp >> 8);
-        uint8_t frac    = (uint8_t)(pos_fp & 0xFF);
-        uint8_t hiIdx   = (loIdx < FFT_N - 1) ? loIdx + 1 : loIdx;
-        uint8_t raw     = (uint8_t)(((uint16_t)wBands[loIdx] * (256 - frac) +
-                                     (uint16_t)wBands[hiIdx] * frac) >> 8);
+        uint8_t raw = fftBands[b];
 
-        // Scale against auto-peak so bars reach full 16-step range
-        uint16_t targetH = ((uint16_t)raw * 16 + scaleTop / 2) / scaleTop;
-        if (targetH > 16) targetH = 16;
+        // Scale against auto-peak so bars reach full 16-step range.
+        // Subtract a small noise floor first so residual hiss doesn't
+        // keep bars floating above zero during quiet passages.
+        const uint8_t noiseFloor = 8;
+        uint8_t rawClamped = (raw > noiseFloor) ? (raw - noiseFloor) : 0;
+        uint8_t scaleRange = (scaleTop > noiseFloor) ? (scaleTop - noiseFloor) : 1;
+        float targetH = ((float)rawClamped * 16.0f) / (float)scaleRange;
+        if (targetH > 16.0f) targetH = 16.0f;
 
-        // Attack/decay smoothing
+        // Float-domain attack/release smoothing.
+        // This keeps internal motion high-resolution and only quantizes at draw time,
+        // which looks much smoother than dropping integer bar heights by fixed steps.
         if (played) {
-            if (targetH >= _spectrumMeas[b]) {
-                _spectrumMeas[b] = targetH;
+            const float current = _spectrumMeas[b];
+            if (targetH >= current) {
+                constexpr float ATTACK = 0.85f;
+                _spectrumMeas[b] = current + ATTACK * (targetH - current);
             } else {
-                const uint16_t releaseStep = 2;
-                const uint16_t decayed = (_spectrumMeas[b] > releaseStep) ? _spectrumMeas[b] - releaseStep : 0;
-                _spectrumMeas[b] = (targetH > decayed) ? targetH : decayed;
+                constexpr float RELEASE_MIN = 0.18f;
+                constexpr float RELEASE_MAX = 0.32f;
+                float release = RELEASE_MIN + (current / 16.0f) * (RELEASE_MAX - RELEASE_MIN);
+                _spectrumMeas[b] = current + release * (targetH - current);
             }
         } else {
-            const uint16_t stopFade = 3;
-            _spectrumMeas[b] = (_spectrumMeas[b] > stopFade) ? _spectrumMeas[b] - stopFade : 0;
+            constexpr float STOP_RELEASE = 0.35f;
+            _spectrumMeas[b] += STOP_RELEASE * (0.0f - _spectrumMeas[b]);
         }
-        if (_spectrumMeas[b] > 16) _spectrumMeas[b] = 16;
+        if (_spectrumMeas[b] < 0.0f) _spectrumMeas[b] = 0.0f;
+        if (_spectrumMeas[b] > 16.0f) _spectrumMeas[b] = 16.0f;
 
-        uint8_t h = (uint8_t)_spectrumMeas[b];
+        uint8_t h = (uint8_t)(_spectrumMeas[b] + 0.5f);
+        if (h > 16) h = 16;
 
         // Peak dot tracking
         const uint8_t peakH = (h > 15) ? 15 : h;
